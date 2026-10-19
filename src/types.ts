@@ -151,10 +151,18 @@ export interface TokenOverview {
   shellCommands: ToolCallsRow[];
 }
 
+export interface DaemonStatus {
+  isRunning: boolean;
+  pid?: number;
+  startedAt?: Date;
+  lastHeartbeat?: Date;
+  eventsProcessed: number;
+}
+
 export interface TokenSnapshot {
   timestamp: Date;
   activeScope: TokenScope;
   plans: PlanInfo[];
   overview: TokenOverview;
-  daemonRunning: boolean;
+  daemon: DaemonStatus;
 }

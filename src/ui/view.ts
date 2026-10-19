@@ -210,6 +210,7 @@ export class TokenView {
       selectedIndex: this.selectedAccountIndex,
       updatedAt: this.snapshot.timestamp,
       isRefreshing: this.isRefreshing,
+      daemon: this.snapshot.daemon,
     });
   }
 

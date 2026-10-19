@@ -1,30 +1,36 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
-  const handler = async (rawArgs: string, ctx: ExtensionCommandContext) => {
-    const { runToken } = await import("./runner.ts");
-    await runToken(pi, rawArgs, ctx);
-  };
-
   pi.registerCommand("token", {
-    description: "Token on Steroids: Connected Provider Quotas & Real-Time Burn Dashboard",
+    description: "pi-token: provider quotas, credit and spend dashboard (opens in its own window)",
     getArgumentCompletions: (prefix: string) => {
       const trimmed = (prefix || "").trim().toLowerCase();
       const options = [
         { value: "usage", label: "usage", description: "Connected provider plans & quota windows" },
-        { value: "overview", label: "overview", description: "2-Column Token spend & tool activity" },
+        { value: "overview", label: "overview", description: "Spend & tool activity" },
         { value: "here", label: "here", description: "Show in this terminal instead of a new window" },
         { value: "global", label: "global", description: "Open in Global machine scope" },
       ];
-      const matches = options.filter((o) => o.value.startsWith(trimmed));
+      const matches = options.filter((option) => option.value.startsWith(trimmed));
       return matches.length > 0 ? matches : null;
     },
-    handler,
+    handler: async (rawArgs: string, ctx: ExtensionCommandContext) => {
+      const { runToken } = await import("./runner.ts");
+      await runToken(pi, rawArgs, ctx);
+    },
   });
 
-  // Alias /tokens for muscle memory
-  pi.registerCommand("tokens", {
-    description: "Token on Steroids: Connected Provider Quotas & Real-Time Burn Dashboard",
-    handler,
+  pi.registerCommand("token-daemon", {
+    description: "pi-token background observer: status (active/inactive). Also: start | stop | restart",
+    getArgumentCompletions: (prefix: string) => {
+      const trimmed = (prefix || "").trim().toLowerCase();
+      const options = ["start", "stop", "restart"].map((value) => ({ value, label: value, description: `${value} the observer` }));
+      const matches = options.filter((option) => option.value.startsWith(trimmed));
+      return matches.length > 0 ? matches : null;
+    },
+    handler: async (rawArgs: string, ctx: ExtensionCommandContext) => {
+      const { runDaemonCommand } = await import("./daemon-command.ts");
+      runDaemonCommand(rawArgs, ctx);
+    },
   });
 }

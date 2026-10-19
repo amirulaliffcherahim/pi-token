@@ -1,4 +1,4 @@
-import type { PlanInfo } from "../types.ts";
+import type { DaemonStatus, PlanInfo } from "../types.ts";
 import { boxBottom, boxLine, boxTop, clipAnsi, zipLinesSideBySide } from "./box.ts";
 import { C, fit, formatReset, healthColor, renderQuotaBar, visibleLength } from "./theme.ts";
 
@@ -7,6 +7,7 @@ export interface UsageTabState {
   selectedIndex: number;
   updatedAt: Date;
   isRefreshing: boolean;
+  daemon: DaemonStatus;
 }
 
 const BAR_WIDTH = 10;
@@ -47,6 +48,11 @@ function label(text: string, width = 11): string {
   return `${C.gray}${fit(text, width)}${C.reset}`;
 }
 
+function daemonText(daemon: DaemonStatus): string {
+  if (!daemon.isRunning) return `${C.darkGray}○ inactive${C.reset}${C.gray}  /token-daemon start${C.reset}`;
+  return `${C.green}● active${C.reset}${C.gray}  pid ${daemon.pid}${C.reset}`;
+}
+
 function renderReadinessCard(state: UsageTabState, width: number): string[] {
   const inner = width - 4;
   const { plans } = state;
@@ -65,6 +71,7 @@ function renderReadinessCard(state: UsageTabState, width: number): string[] {
       `${label("Next reset")}${C.bold}${C.amber}${next ? formatReset(new Date(next.at)) : "—"}${C.reset}${next ? `${C.gray}  ${next.provider}${C.reset}` : ""}`,
       inner,
     ),
+    boxLine(`${label("Daemon")}${daemonText(state.daemon)}`, inner),
     boxLine(`${label("Updated")}${C.white}${state.updatedAt.toLocaleTimeString()}${C.reset}${refreshing}`, inner),
   ];
 }

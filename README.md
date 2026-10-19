@@ -28,10 +28,16 @@ A high-performance Token-inspired quota, limits, and spend telemetry extension f
   - `[q]` / `[Esc]` — Exit
 
 ## Commands
-- `/token` or `/tokens` — Open the dashboard in its own Windows Terminal window (Pi stays usable; auto-refresh every 30s). Falls back to an in-terminal overlay when no window launcher exists.
+- `/token` — Open the dashboard in its own Windows Terminal window (Pi stays usable; auto-refresh every 30s). Falls back to an in-terminal overlay when no window launcher exists.
 - `/token here` — Force the in-terminal overlay.
 - `/token overview` — Open directly to 2-column Token analytics.
 - `/token global` — Open in global machine scope.
+
+## Data & daemon
+
+- Own database: `~/.pi/agent/pi-token/token.db` (override `PI_TOKEN_DB_PATH`). On first run the old `pulse.db` ledger is imported read-only; it is never modified.
+- `/token-daemon` shows `active` / `inactive`. `/token-daemon start|stop|restart` controls a detached background observer that indexes sessions and caches provider quotas every 30–60s, keeps 30 days of quota history in `plan_snapshots`, and logs to `~/.pi/agent/pi-token/daemon.log` (256 KB cap). It never starts on its own and does not survive reboot.
+- With the daemon running, the dashboard reads its cached quotas instead of calling provider APIs itself.
 
 ## Standalone
 
