@@ -155,7 +155,8 @@ export class TokenView {
     const visible = body.slice(this.scrollOffset, this.scrollOffset + bodyBudget);
     const blank = " ".repeat(totalW);
     while (visible.length < bodyBudget) visible.push(blank);
-    return [...headerLines, ...visible, ...footerLines];
+    const padded = (lines: string[]) => lines.map((line) => padToCellWidth(line, totalW));
+    return [...padded(headerLines), ...visible, ...padded(footerLines)];
   }
 
   /** One-row tab bar (active tab highlighted) plus a rule: saves two rows over a boxed header. */
