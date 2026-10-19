@@ -20,7 +20,7 @@ const initialTab: TokenTab = requestedTab && TABS.includes(requestedTab) ? reque
 const filter: TimeFilter = { mode: "7d", dayOffset: 0, label: "7 Days" };
 const onceMode = process.argv.includes("--once");
 
-const load = (nextScope: TokenScope, nextFilter: TimeFilter) => loadSnapshot(cwd, nextScope, nextFilter);
+const load = (nextScope: TokenScope, nextFilter: TimeFilter, force = false) => loadSnapshot(cwd, nextScope, nextFilter, force);
 
 async function printOnce(): Promise<void> {
   const width = Number(argValue("width") ?? 120);

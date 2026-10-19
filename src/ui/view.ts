@@ -3,11 +3,13 @@ import { boxBottom, boxLine, boxTop, clipAnsi, zipLinesSideBySide } from "./box.
 import {
   C,
   formatCost,
+  fit,
   formatTokens,
   padToCellWidth,
   renderTokenBar,
   visibleLength,
 } from "./theme.ts";
+import { renderTable } from "./table.ts";
 import { renderUsageTab } from "./usage-tab.ts";
 
 export class TokenView {
@@ -20,14 +22,14 @@ export class TokenView {
   private isRefreshing = false;
   private readonly done: () => void;
   private readonly getTerminalRows: () => number;
-  private readonly onRefresh: (scope: TokenScope, filter: TimeFilter) => Promise<TokenSnapshot>;
+  private readonly onRefresh: (scope: TokenScope, filter: TimeFilter, force?: boolean) => Promise<TokenSnapshot>;
   private readonly onUpdate: () => void;
 
   constructor(options: {
     snapshot: TokenSnapshot;
     done: () => void;
     getTerminalRows: () => number;
-    onRefresh: (scope: TokenScope, filter: TimeFilter) => Promise<TokenSnapshot>;
+    onRefresh: (scope: TokenScope, filter: TimeFilter, force?: boolean) => Promise<TokenSnapshot>;
     initialTab?: TokenTab;
     /** Host repaint hook: refresh finishes asynchronously, after handleInput has returned. */
     onUpdate?: () => void;
@@ -43,12 +45,12 @@ export class TokenView {
 
   public invalidate(): void {}
 
-  public async triggerRefresh(): Promise<void> {
+  public async triggerRefresh(force = false): Promise<void> {
     if (this.isRefreshing) return;
     this.isRefreshing = true;
     this.onUpdate();
     try {
-      this.snapshot = await this.onRefresh(this.currentScope, this.currentTimeFilter);
+      this.snapshot = await this.onRefresh(this.currentScope, this.currentTimeFilter, force);
     } catch {
       // keep last good snapshot on failure; the Updated timestamp stays stale
     } finally {
@@ -124,52 +126,39 @@ export class TokenView {
 
     // Manual reload: [r]
     if (data === "r" || data === "R") {
-      this.triggerRefresh();
+      this.triggerRefresh(true);
       return;
     }
   }
 
   public render(width: number): string[] {
-    const totalW = Math.max(90, width || 100);
-    const termRows = Math.max(26, this.getTerminalRows());
+    const totalW = Math.max(60, width || 100);
+    const termRows = Math.max(16, this.getTerminalRows());
 
-    // 1. Top Header (Authentic Token Header Bar with Pi-Token branding)
     const headerLines = this.renderTokenHeader(totalW);
-
-    // 2. Active Tab Content
-    let bodyLines: string[] = [];
-    switch (this.activeTab) {
-      case "usage":
-        bodyLines = this.renderUsageTab(totalW);
-        break;
-      case "overview":
-        bodyLines = this.renderOverviewTab(totalW);
-        break;
-      case "models":
-        bodyLines = this.renderModelsTab(totalW);
-        break;
-      case "daily":
-        bodyLines = this.renderDailyTab(totalW);
-        break;
-      case "hourly":
-        bodyLines = this.renderHourlyTab(totalW);
-        break;
-      case "sessions":
-        bodyLines = this.renderSessionsTab(totalW);
-        break;
-    }
-
-    // 3. Bottom Footer (Token Footer Bar)
     const footerLines = this.renderTokenFooter(totalW);
 
-    // Footer is anchored to the bottom row: body is padded or clipped to fit between header and footer
+    let bodyLines: string[] = [];
+    switch (this.activeTab) {
+      case "usage": bodyLines = this.renderUsageTab(totalW); break;
+      case "overview": bodyLines = this.renderOverviewTab(totalW); break;
+      case "models": bodyLines = this.renderModelsTab(totalW); break;
+      case "daily": bodyLines = this.renderDailyTab(totalW); break;
+      case "hourly": bodyLines = this.renderHourlyTab(totalW); break;
+      case "sessions": bodyLines = this.renderSessionsTab(totalW); break;
+    }
+
+    // Footer is anchored to the bottom row; the body scrolls inside the space between header and footer
     const bodyBudget = Math.max(4, termRows - headerLines.length - footerLines.length);
-    const body = bodyLines.map((l) => (typeof l === "string" ? l : String(l ?? "")));
-    const fitted = body.length > bodyBudget ? body.slice(0, bodyBudget) : [...body, ...new Array(bodyBudget - body.length).fill("")];
-    return [...headerLines, ...fitted, ...footerLines];
+    const body = bodyLines.map((line) => padToCellWidth(typeof line === "string" ? line : String(line ?? ""), totalW));
+    this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, Math.max(0, body.length - bodyBudget)));
+    const visible = body.slice(this.scrollOffset, this.scrollOffset + bodyBudget);
+    const blank = " ".repeat(totalW);
+    while (visible.length < bodyBudget) visible.push(blank);
+    return [...headerLines, ...visible, ...footerLines];
   }
 
-  /** Authentic Token Header Bar: "┌ pi-token ───────────── [Tabs] ──────────── GitHub ┐" */
+  /** One-row tab bar (active tab highlighted) plus a rule: saves two rows over a boxed header. */
   private renderTokenHeader(totalW: number): string[] {
     const tabDefs: { id: TokenTab; label: string; num: string }[] = [
       { id: "usage", label: "Usage", num: "1" },
@@ -179,47 +168,38 @@ export class TokenView {
       { id: "hourly", label: "Hourly", num: "5" },
       { id: "sessions", label: "Sessions", num: "6" },
     ];
+    const compact = totalW < 90;
+    const tabs = tabDefs
+      .map((tab) => {
+        const text = compact ? tab.label.slice(0, 5) : tab.label;
+        return this.activeTab === tab.id
+          ? `${C.bgActive}${C.bold}${C.white} ${tab.num} ${text} ${C.reset}`
+          : `${C.darkGray} ${tab.num}${C.reset}${C.gray} ${text} ${C.reset}`;
+      })
+      .join("");
 
-    const tabSegments = tabDefs.map((t) => {
-      const active = this.activeTab === t.id;
-      if (active) {
-        return `${C.bold}${C.brandCyan}${t.label}${C.reset}`;
-      }
-      return `${C.gray}${t.label}${C.reset}`;
-    }).join(` ${C.darkGray}│${C.reset} `);
-
-    const title = `${C.bold}${C.brandOrange} pi-token ${C.reset}`;
-    const leftPart = `${C.boxBlue}┌${title}${C.boxBlue}`;
-    const rightTag = `${C.gray}v1.0.0 · ${this.currentScope === "repo" ? "Workspace" : "Global"}${C.boxBlue}┐${C.reset}`;
-
-    const remTop = Math.max(0, totalW - visibleLength(title) - visibleLength(rightTag) - 1);
-    const topLine = `${leftPart}${"─".repeat(remTop)}${rightTag}`;
-
-    const tabLineContent = `  ${tabSegments}`;
-    const scopeLabel = `${C.purple}[t] ${this.currentTimeFilter.label}${C.reset}  ${C.amber}[s] ${this.currentScope.toUpperCase()}${C.reset}`;
-    const padMid = Math.max(2, totalW - visibleLength(tabLineContent) - visibleLength(scopeLabel) - 4);
-    const midLine = `${C.boxBlue}│${C.reset}${tabLineContent}${" ".repeat(padMid)}${scopeLabel}  ${C.boxBlue}│${C.reset}`;
-
-    const botLine = `${C.boxBlue}├${"─".repeat(Math.max(0, totalW - 2))}┤${C.reset}`;
-
-    return [topLine, midLine, botLine];
+    const brand = `${C.bold}${C.brandOrange} pi-token ${C.reset}`;
+    const scope = this.currentScope === "repo" ? "repo" : "global";
+    const right = compact
+      ? `${C.amber}${scope}${C.reset} `
+      : `${C.purple}${this.currentTimeFilter.label}${C.reset}${C.darkGray} · ${C.reset}${C.amber}${scope}${C.reset} `;
+    const gap = Math.max(1, totalW - visibleLength(brand) - visibleLength(tabs) - visibleLength(right));
+    const bar = clipAnsi(`${brand}${tabs}${" ".repeat(gap)}${right}`, totalW);
+    return [bar, `${C.boxBlue}${"─".repeat(totalW)}${C.reset}`];
   }
 
-  /** Authentic Token Footer Bar: Sorts, navigation shortcuts & totals */
+  /** Rule + one hint row; totals appear only when they fit. */
   private renderTokenFooter(totalW: number): string[] {
     const o = this.snapshot.overview;
-    const topBorder = `${C.boxBlue}├${"─".repeat(Math.max(0, totalW - 2))}┤${C.reset}`;
-
-    const leftNav = `  ${C.cyan}▲/▼${C.reset} select · ${C.cyan}1..6${C.reset} tab · ${C.cyan}[Tab]${C.reset} cycle · ${C.cyan}[t]${C.reset} period · ${C.cyan}[s]${C.reset} scope · ${C.cyan}[r]${C.reset} refresh · ${C.red}[q]${C.reset} quit`;
-    const rightTotals = `${C.amber}${formatCost(o.totalCost)}${C.reset} · ${formatTokens(o.inputTokens + o.outputTokens)} tok · ${o.totalCalls.toLocaleString()} calls  `;
-    // Narrow terminals: keep the key hints, drop the totals instead of overflowing the frame
-    const fitsTotals = visibleLength(leftNav) + visibleLength(rightTotals) + 4 <= totalW;
-    const rightPart = fitsTotals ? rightTotals : "";
-    const pad1 = Math.max(0, totalW - visibleLength(leftNav) - visibleLength(rightPart) - 2);
-    const line1 = clipAnsi(`${C.boxBlue}│${C.reset}${leftNav}${" ".repeat(pad1)}${rightPart}`, totalW - 1) + `${C.boxBlue}│${C.reset}`;
-
-    const bottomBorder = `${C.boxBlue}└${"─".repeat(Math.max(0, totalW - 2))}┘${C.reset}`;
-    return [topBorder, line1, bottomBorder];
+    const key = (k: string) => `${C.cyan}${k}${C.reset}`;
+    const hints = totalW < 90
+      ? ` ${key("▲▼")} move  ${key("1-6")} tab  ${key("t")} period  ${key("s")} scope  ${key("r")} refresh  ${key("q")} quit`
+      : ` ${key("▲▼")} move · ${key("1-6")}/${key("Tab")} tab · ${key("t")} period · ${key("s")} scope · ${key("r")} refresh · ${key("q")} quit`;
+    const totals = `${C.amber}${formatCost(o.totalCost)}${C.reset}${C.gray} · ${formatTokens(o.inputTokens + o.outputTokens)} tok · ${o.totalCalls.toLocaleString()} calls ${C.reset}`;
+    const fits = visibleLength(hints) + visibleLength(totals) + 2 <= totalW;
+    const gap = fits ? totalW - visibleLength(hints) - visibleLength(totals) : 0;
+    const line = clipAnsi(`${hints}${" ".repeat(gap)}${fits ? totals : ""}`, totalW);
+    return [`${C.boxBlue}${"─".repeat(totalW)}${C.reset}`, line];
   }
 
   /** 1. Usage tab (see usage-tab.ts) */
@@ -235,15 +215,15 @@ export class TokenView {
   /** 2. Tab 2: Token 2-Column Overview Dashboard */
   private renderOverviewTab(totalW: number): string[] {
     const o = this.snapshot.overview;
-    const colW = Math.floor((totalW - 6) / 2);
+    const colW = Math.floor((totalW - 2) / 2);
     const innerColW = colW - 4;
 
-    const heroBoxW = totalW - 2;
+    const heroBoxW = totalW;
     const innerHeroW = heroBoxW - 4;
     const heroLines: string[] = [
       boxTop(`Pi-Token ⚡ Overview [ ${o.periodLabel} ]`, heroBoxW, C.boxOrange),
       boxLine(
-        `${C.bold}${C.brandGold}${formatCost(o.totalCost)}${C.reset} cost   ${C.bold}${C.white}${o.totalCalls.toLocaleString()}${C.reset} calls   ${C.bold}${C.white}${o.totalSessions}${C.reset} sessions   ${C.bold}${C.green}${o.cacheHitRate}% cache hit${C.reset}   ${C.purple}Burn: $${o.burnVelocityUsdPerHour.toFixed(2)}/hr · ${o.burnVelocityTokensPerMin} tok/min${C.reset}`,
+        `${C.bold}${C.brandGold}${formatCost(o.totalCost)}${C.reset} cost   ${C.bold}${C.white}${o.totalCalls.toLocaleString()}${C.reset} calls   ${C.bold}${C.white}${o.totalSessions}${C.reset} sessions   ${C.bold}${C.green}${o.cacheHitRate}% cache hit${C.reset}   ${C.purple}Burn: $${o.burnVelocityUsdPerHour.toFixed(2)}/hr · ${formatTokens(o.burnVelocityTokensPerMin)} tok/min${C.reset}`,
         innerHeroW,
         C.boxOrange
       ),
@@ -257,7 +237,7 @@ export class TokenView {
 
     const leftColLines: string[] = [];
     leftColLines.push(boxTop("Daily Activity", colW, C.boxBlue));
-    leftColLines.push(boxLine(`${C.gray}Date       Tokens       Cost    Calls${C.reset}`, innerColW, C.boxBlue));
+    leftColLines.push(boxLine(`${C.bold}${C.gray}${fit("Date", 5)} ${fit("Spend", 8)} ${"Cost".padStart(7)} ${"Calls".padStart(5)}${C.reset}`, innerColW, C.boxBlue));
     const maxDayCost = Math.max(...o.dailyActivity.map((d) => d.cost), 1);
     for (const d of o.dailyActivity.slice(0, 5)) {
       const bar = renderTokenBar(d.cost / maxDayCost, 8);
@@ -267,7 +247,7 @@ export class TokenView {
     leftColLines.push(boxBottom(colW, C.boxBlue));
 
     leftColLines.push(boxTop("By Activity", colW, C.boxPurple));
-    leftColLines.push(boxLine(`${C.gray}Type              Cost  Turns  1-Shot${C.reset}`, innerColW, C.boxPurple));
+    leftColLines.push(boxLine(`${C.bold}${C.gray}${fit("", 6)} ${fit("Type", 12)} ${"Cost".padStart(6)} ${"Turns".padStart(5)}  1-Shot${C.reset}`, innerColW, C.boxPurple));
     for (const a of o.byActivity) {
       const bar = renderTokenBar(a.turns / (o.totalCalls || 1), 6);
       const row = `${bar} ${C.cyan}${a.name.padEnd(12)}${C.reset} ${C.amber}${formatCost(a.cost).padStart(6)}${C.reset} ${String(a.turns).padStart(5)}  ${a.pct > 0 ? `${C.green}${a.pct}%${C.reset}` : `${C.darkGray}-${C.reset}`}`;
@@ -285,7 +265,7 @@ export class TokenView {
 
     const rightColLines: string[] = [];
     rightColLines.push(boxTop("By Project", colW, C.boxGreen));
-    rightColLines.push(boxLine(`${C.gray}Workspace / Repo                Cost   Sess${C.reset}`, innerColW, C.boxGreen));
+    rightColLines.push(boxLine(`${C.bold}${C.gray}${fit("", 6)} ${fit("Project", 20)} ${"Cost".padStart(7)} ${"Sess".padStart(4)}${C.reset}`, innerColW, C.boxGreen));
     const maxProjCost = Math.max(...o.byProject.map((p) => p.cost), 1);
     for (const p of o.byProject.slice(0, 5)) {
       const bar = renderTokenBar(p.cost / maxProjCost, 6);
@@ -296,7 +276,7 @@ export class TokenView {
     rightColLines.push(boxBottom(colW, C.boxGreen));
 
     rightColLines.push(boxTop("By Model", colW, C.boxPurple));
-    rightColLines.push(boxLine(`${C.gray}Model Identifier                Cost  Calls${C.reset}`, innerColW, C.boxPurple));
+    rightColLines.push(boxLine(`${C.bold}${C.gray}${fit("", 6)} ${fit("Model", 20)} ${"Cost".padStart(7)} ${"Calls".padStart(5)}${C.reset}`, innerColW, C.boxPurple));
     const maxModCost = Math.max(...o.byModel.map((m) => m.cost), 1);
     for (const m of o.byModel.slice(0, 5)) {
       const bar = renderTokenBar(m.cost / maxModCost, 6);
@@ -315,119 +295,83 @@ export class TokenView {
     rightColLines.push(boxBottom(colW, C.boxOrange));
 
     const gridLines = zipLinesSideBySide(leftColLines, rightColLines, colW, colW, 2);
-    return [...heroLines, "", ...gridLines];
+    return [...heroLines, ...gridLines];
   }
 
-  /** 3. Tab 3: Detailed Models Comparison */
+  /** 3. Models */
   private renderModelsTab(totalW: number): string[] {
-    const o = this.snapshot.overview;
-    const boxW = totalW - 2;
-    const innerW = boxW - 4;
-    const lines: string[] = [];
-
-    lines.push(boxTop("PI-TOKEN MODELS TELEMETRY & SPEND BREAKDOWN", boxW, C.boxPurple));
-    lines.push(boxLine(`${C.gray}Rank  Model Identifier         Provider     Input       Output      Cached      Total Tok    Hit %   Calls     Total Cost${C.reset}`, innerW, C.boxPurple));
-
-    for (let i = 0; i < o.detailedModels.length; i++) {
-      const m = o.detailedModels[i];
-      const rank = String(i + 1).padStart(2);
-      const mName = padToCellWidth(m.model.length > 22 ? m.model.slice(0, 21) + "…" : m.model, 23);
-      const prov = padToCellWidth(m.provider, 12);
-      const inp = padToCellWidth(formatTokens(m.inputTokens), 11);
-      const out = padToCellWidth(formatTokens(m.outputTokens), 11);
-      const cr = padToCellWidth(formatTokens(m.cachedTokens), 11);
-      const tot = padToCellWidth(formatTokens(m.totalTokens), 12);
-      const hit = padToCellWidth(`${m.cacheHitRate}%`, 7);
-      const calls = padToCellWidth(String(m.calls), 9);
-      const cost = `${C.bold}${C.amber}${formatCost(m.cost).padStart(10)}${C.reset}`;
-
-      const row = `${C.gray}${rank}${C.reset}    ${C.cyan}${mName}${C.white}${prov}${inp}${out}${cr}${tot}${hit}${calls}${cost}`;
-      lines.push(boxLine(row, innerW, C.boxPurple));
-    }
-
-    lines.push(boxBottom(boxW, C.boxPurple));
-    return lines;
+    return renderTable(
+      "MODELS",
+      [
+        { title: "#", width: 2, align: "right", priority: 9, text: (m: any) => String(this.snapshot.overview.detailedModels.indexOf(m) + 1), color: C.darkGray },
+        { title: "Model", width: 22, priority: 0, text: (m: any) => m.model, color: C.cyan },
+        { title: "Cost", width: 9, align: "right", priority: 1, text: (m: any) => formatCost(m.cost), color: C.amber },
+        { title: "Calls", width: 6, align: "right", priority: 2, text: (m: any) => String(m.calls) },
+        { title: "Hit%", width: 5, align: "right", priority: 3, text: (m: any) => `${m.cacheHitRate}%`, color: C.green },
+        { title: "Provider", width: 10, priority: 4, text: (m: any) => m.provider, color: C.gray },
+        { title: "Input", width: 7, align: "right", priority: 5, text: (m: any) => formatTokens(m.inputTokens) },
+        { title: "Output", width: 7, align: "right", priority: 6, text: (m: any) => formatTokens(m.outputTokens) },
+        { title: "Cached", width: 7, align: "right", priority: 7, text: (m: any) => formatTokens(m.cachedTokens) },
+        { title: "Total", width: 7, align: "right", priority: 8, text: (m: any) => formatTokens(m.totalTokens) },
+      ],
+      this.snapshot.overview.detailedModels,
+      totalW,
+    );
   }
 
-  /** 4. Tab 4: Daily History */
+  /** 4. Daily history */
   private renderDailyTab(totalW: number): string[] {
-    const o = this.snapshot.overview;
-    const boxW = totalW - 2;
-    const innerW = boxW - 4;
-    const lines: string[] = [];
-
-    lines.push(boxTop("PI-TOKEN DAILY CONSUMPTION & SPEND HISTORY", boxW, C.boxBlue));
-    lines.push(boxLine(`${C.gray}Date         Calls    Input       Output      Cached       Total Tok     Hit %    Cost (USD)     Daily Ratio${C.reset}`, innerW, C.boxBlue));
-
-    const maxCost = Math.max(...o.dailyActivity.map((d) => d.cost), 1);
-    for (const d of o.dailyActivity) {
-      const dt = padToCellWidth(d.date, 12);
-      const calls = padToCellWidth(String(d.calls), 8);
-      const inp = padToCellWidth(formatTokens(d.inputTokens), 11);
-      const out = padToCellWidth(formatTokens(d.outputTokens), 11);
-      const cr = padToCellWidth(formatTokens(d.tokens - d.inputTokens - d.outputTokens), 12);
-      const tot = padToCellWidth(formatTokens(d.tokens), 13);
-      const hit = padToCellWidth(`${d.cacheHitRate}%`, 8);
-      const cost = padToCellWidth(formatCost(d.cost), 14);
-      const bar = renderTokenBar(d.cost / maxCost, 14);
-
-      const row = `${C.white}${dt}${C.reset}${calls}${inp}${out}${cr}${tot}${hit}${C.amber}${cost}${C.reset}${bar}`;
-      lines.push(boxLine(row, innerW, C.boxBlue));
-    }
-
-    lines.push(boxBottom(boxW, C.boxBlue));
-    return lines;
+    const days = this.snapshot.overview.dailyActivity;
+    const maxCost = Math.max(...days.map((d) => d.cost), 1);
+    return renderTable(
+      "DAILY",
+      [
+        { title: "Date", width: 10, priority: 0, text: (d: any) => d.date },
+        { title: "Cost", width: 9, align: "right", priority: 1, text: (d: any) => formatCost(d.cost), color: C.amber },
+        { title: "Calls", width: 6, align: "right", priority: 2, text: (d: any) => String(d.calls) },
+        { title: "Hit%", width: 5, align: "right", priority: 3, text: (d: any) => `${d.cacheHitRate}%`, color: C.green },
+        { title: "Total", width: 7, align: "right", priority: 4, text: (d: any) => formatTokens(d.tokens) },
+        { title: "Spend", width: 12, priority: 5, text: (d: any) => "█".repeat(Math.max(d.cost > 0 ? 1 : 0, Math.round((d.cost / maxCost) * 12))), color: C.brandCyan },
+        { title: "Input", width: 7, align: "right", priority: 6, text: (d: any) => formatTokens(d.inputTokens) },
+        { title: "Output", width: 7, align: "right", priority: 7, text: (d: any) => formatTokens(d.outputTokens) },
+      ],
+      days,
+      totalW,
+    );
   }
 
-  /** 5. Tab 5: Hourly Diurnal Profile */
+  /** 5. Hourly profile */
   private renderHourlyTab(totalW: number): string[] {
-    const o = this.snapshot.overview;
-    const boxW = totalW - 2;
-    const innerW = boxW - 4;
-    const lines: string[] = [];
-
-    lines.push(boxTop("PI-TOKEN 24-HOUR HOURLY DIURNAL VELOCITY", boxW, C.boxGreen));
-    lines.push(boxLine(`${C.gray}Hour (UTC)    Calls       Tokens         Cost (USD)    Relative Burn Velocity${C.reset}`, innerW, C.boxGreen));
-
-    const maxCost = Math.max(...o.hourlyActivity.map((h) => h.cost), 1);
-    for (const h of o.hourlyActivity) {
-      const hr = padToCellWidth(`${h.hour}:00`, 13);
-      const calls = padToCellWidth(String(h.calls), 11);
-      const tok = padToCellWidth(formatTokens(h.tokens), 14);
-      const cost = padToCellWidth(formatCost(h.cost), 13);
-      const bar = renderTokenBar(h.cost / maxCost, 24);
-
-      const row = `${C.cyan}${hr}${C.reset}${calls}${tok}${C.amber}${cost}${C.reset}${bar}`;
-      lines.push(boxLine(row, innerW, C.boxGreen));
-    }
-
-    lines.push(boxBottom(boxW, C.boxGreen));
-    return lines;
+    const hours = this.snapshot.overview.hourlyActivity;
+    const maxCost = Math.max(...hours.map((h) => h.cost), 1);
+    return renderTable(
+      "HOURLY (UTC)",
+      [
+        { title: "Hour", width: 5, priority: 0, text: (h: any) => `${h.hour}:00`, color: C.cyan },
+        { title: "Cost", width: 9, align: "right", priority: 1, text: (h: any) => formatCost(h.cost), color: C.amber },
+        { title: "Calls", width: 6, align: "right", priority: 2, text: (h: any) => String(h.calls) },
+        { title: "Burn", width: 24, priority: 3, text: (h: any) => "█".repeat(Math.max(h.cost > 0 ? 1 : 0, Math.round((h.cost / maxCost) * 24))), color: C.brandCyan },
+        { title: "Tokens", width: 7, align: "right", priority: 4, text: (h: any) => formatTokens(h.tokens) },
+      ],
+      hours,
+      totalW,
+    );
   }
 
-  /** 6. Tab 6: Live Sessions Ledger */
+  /** 6. Recent sessions */
   private renderSessionsTab(totalW: number): string[] {
-    const o = this.snapshot.overview;
-    const boxW = totalW - 2;
-    const innerW = boxW - 4;
-    const lines: string[] = [];
-
-    lines.push(boxTop("PI-TOKEN LIVE RECENT SESSIONS LEDGER", boxW, C.boxOrange));
-    lines.push(boxLine(`${C.gray}Last Active      Session UUID                           Workspace             Model                 Calls   Cost${C.reset}`, innerW, C.boxOrange));
-
-    for (const s of o.detailedSessions) {
-      const act = padToCellWidth(s.lastActive, 16);
-      const uuid = padToCellWidth(s.sessionId, 38);
-      const ws = padToCellWidth(s.workspace, 21);
-      const mdl = padToCellWidth(s.model, 21);
-      const calls = padToCellWidth(String(s.calls), 7);
-      const cost = `${C.bold}${C.amber}${formatCost(s.cost).padStart(8)}${C.reset}`;
-
-      const row = `${C.gray}${act}${C.reset}${C.cyan}${uuid}${C.white}${ws}${mdl}${calls}${cost}`;
-      lines.push(boxLine(row, innerW, C.boxOrange));
-    }
-
-    lines.push(boxBottom(boxW, C.boxOrange));
-    return lines;
+    return renderTable(
+      "SESSIONS",
+      [
+        { title: "Last active", width: 11, priority: 0, text: (s: any) => s.lastActive, color: C.gray },
+        { title: "Cost", width: 9, align: "right", priority: 1, text: (s: any) => formatCost(s.cost), color: C.amber },
+        { title: "Workspace", width: 22, priority: 2, text: (s: any) => s.workspace },
+        { title: "Model", width: 20, priority: 3, text: (s: any) => s.model, color: C.cyan },
+        { title: "Calls", width: 6, align: "right", priority: 4, text: (s: any) => String(s.calls) },
+        { title: "Session", width: 8, priority: 5, text: (s: any) => s.sessionId.slice(-8), color: C.darkGray },
+      ],
+      this.snapshot.overview.detailedSessions,
+      totalW,
+    );
   }
 }

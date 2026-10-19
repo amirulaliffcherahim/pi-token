@@ -7,6 +7,8 @@ import { loadSnapshot } from "./snapshot.ts";
 import type { TimeFilter, TokenScope, TokenTab } from "./types.ts";
 import { TokenView } from "./ui/view.ts";
 
+/** Laptop-friendly default (columns,rows); the layout adapts if the user resizes. */
+const WINDOW_SIZE = "104,28";
 const STANDALONE_ENTRY = join(dirname(fileURLToPath(import.meta.url)), "standalone.ts");
 
 interface LaunchOptions {
@@ -24,6 +26,7 @@ function launchWindow(options: LaunchOptions): Promise<boolean> {
 
   const args = [
     "-w", "new",
+    "--size", WINDOW_SIZE,
     "--title", "pi-token",
     process.execPath,
     "--experimental-strip-types", "--no-warnings",
@@ -63,7 +66,7 @@ async function openOverlay(ctx: ExtensionCommandContext, options: LaunchOptions)
       done,
       getTerminalRows: () => tui.rows || 30,
       initialTab: options.tab,
-      onRefresh: (scope, nextFilter) => loadSnapshot(options.cwd, scope, nextFilter),
+      onRefresh: (scope, nextFilter, force) => loadSnapshot(options.cwd, scope, nextFilter, force),
       onUpdate: () => tui.requestRender(),
     });
     return {

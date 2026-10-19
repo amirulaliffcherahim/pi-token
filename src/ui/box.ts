@@ -3,7 +3,7 @@ import { C, visibleLength } from "./theme.ts";
 export function boxTop(title: string, width: number, borderColor: string = C.boxBlue): string {
   const label = title ? ` ${title} ` : "";
   const rule = Math.max(0, width - label.length - 2);
-  return `${borderColor}┌${C.bold}${C.white}${label}${C.reset}${borderColor}${"─".repeat(rule)}┐${C.reset}`;
+  return `${borderColor}┌${C.bold}${C.brandCyan}${label}${C.reset}${borderColor}${"─".repeat(rule)}┐${C.reset}`;
 }
 
 export function boxBottom(width: number, borderColor: string = C.boxBlue): string {

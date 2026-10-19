@@ -24,13 +24,17 @@ export const C = {
   brandPurple: "\x1b[38;2;168;85;247m",
   brandPink: "\x1b[38;2;236;72;153m",
 
-  // Box borders
-  boxOrange: "\x1b[38;2;249;115;22m",
-  boxBlue: "\x1b[38;2;59;130;246m",
-  boxGreen: "\x1b[38;2;34;197;94m",
-  boxPurple: "\x1b[38;2;168;85;247m",
-  boxPink: "\x1b[38;2;236;72;153m",
-  boxGray: "\x1b[38;2;71;85;105m",
+  // One quiet border colour for every box: colour is reserved for data, not chrome
+  boxOrange: "[38;2;100;116;139m",
+  boxBlue: "[38;2;100;116;139m",
+  boxGreen: "[38;2;100;116;139m",
+  boxPurple: "[38;2;100;116;139m",
+  boxPink: "[38;2;100;116;139m",
+  boxGray: "[38;2;71;85;105m",
+
+  // Surfaces
+  bgActive: "[48;2;30;64;110m",
+  bgSelected: "[48;2;30;41;59m",
 };
 
 /** Render Token segmented bar (blue -> cyan -> yellow -> orange) */
