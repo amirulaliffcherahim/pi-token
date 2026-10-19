@@ -21,10 +21,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("token-daemon", {
-    description: "pi-token background observer: status (active/inactive). Also: start | stop | restart",
+    description: "pi-token background observer: status (active/inactive). Also: start | stop | restart | autostart on|off",
     getArgumentCompletions: (prefix: string) => {
       const trimmed = (prefix || "").trim().toLowerCase();
-      const options = ["start", "stop", "restart"].map((value) => ({ value, label: value, description: `${value} the observer` }));
+      const options = ["start", "stop", "restart", "autostart on", "autostart off"].map((value) => ({ value, label: value, description: `${value} the observer` }));
       const matches = options.filter((option) => option.value.startsWith(trimmed));
       return matches.length > 0 ? matches : null;
     },

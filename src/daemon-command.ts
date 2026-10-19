@@ -1,4 +1,5 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { disableAutostart, enableAutostart, isAutostartEnabled } from "./daemon/autostart.ts";
 import { getDaemonStatus, startDaemon, stopDaemon } from "./daemon/control.ts";
 
 function describeStatus(): string {
@@ -8,9 +9,18 @@ function describeStatus(): string {
   return `pi-token daemon: active · pid ${status.pid} · last beat ${beatSeconds}s ago · ${status.eventsProcessed} events indexed`;
 }
 
+function runAutostart(mode: string | undefined, ctx: ExtensionCommandContext): void {
+  if (mode === "on" || mode === "off") {
+    const result = mode === "on" ? enableAutostart() : disableAutostart();
+    return ctx.ui.notify(`pi-token autostart: ${result.message}`, result.ok ? "info" : "error");
+  }
+  ctx.ui.notify(`pi-token autostart: ${isAutostartEnabled() ? "on" : "off"} (/token-daemon autostart on|off)`, "info");
+}
+
 /** /token-daemon → status only. start/stop/restart are explicit so nothing runs in the background unasked. */
 export function runDaemonCommand(rawArgs: string, ctx: ExtensionCommandContext): void {
   const action = (rawArgs || "").trim().toLowerCase();
+  if (action.startsWith("autostart")) return runAutostart(action.split(/s+/)[1], ctx);
   if (action === "stop" || action === "restart") {
     const result = stopDaemon();
     if (!result.ok) return ctx.ui.notify(`pi-token daemon: ${result.message}`, "error");
