@@ -1,79 +1,88 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { fetchAllPlans } from "./data/plans.js";
-import { syncSessionsIncremental } from "./data/sync.js";
-import { getTokScaleOverview } from "./data/telemetry.js";
-import type { PulseScope, PulseSnapshot, TimeFilter } from "./types.js";
-import { TokScaleView } from "./ui/view.js";
+import { loadSnapshot } from "./snapshot.ts";
+import type { TimeFilter, TokenScope, TokenTab } from "./types.ts";
+import { TokenView } from "./ui/view.ts";
 
-async function loadSnapshot(
-  ctx: ExtensionCommandContext,
-  scope: PulseScope,
-  filter: TimeFilter
-): Promise<PulseSnapshot> {
-  // 1. Sync messages from sessions folder
-  await syncSessionsIncremental().catch(() => {});
+const STANDALONE_ENTRY = join(dirname(fileURLToPath(import.meta.url)), "standalone.ts");
 
-  // 2. Fetch connected provider plans (Claude, Antigravity, DeepSeek, SubQ, etc.)
-  const plans = await fetchAllPlans();
-
-  // 3. Compute telemetry overview
-  const cwd = ctx.cwd || process.cwd();
-  const overview = getTokScaleOverview(scope, cwd, filter);
-
-  return {
-    timestamp: new Date(),
-    activeScope: scope,
-    plans,
-    overview,
-    activeSessions: [],
-    daemonRunning: false,
-  };
+interface LaunchOptions {
+  cwd: string;
+  scope: TokenScope;
+  tab: TokenTab;
 }
 
-export async function runPulse(
-  pi: ExtensionAPI,
-  rawArgs: string,
-  ctx: ExtensionCommandContext
-): Promise<void> {
-  const args = (rawArgs || "").trim().toLowerCase();
+/** Windows Terminal ships as a per-user app alias, so it is not always on PATH for child processes. */
+function findWindowsTerminal(): string | undefined {
+  const alias = join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WindowsApps", "wt.exe");
+  return existsSync(alias) ? alias : undefined;
+}
 
-  let initialScope: PulseScope = "repo";
-  let initialTab: "usage" | "overview" = "usage";
+/** Opens the dashboard in its own window. Returns false when no launcher is available so the caller can fall back. */
+function launchWindow(options: LaunchOptions): boolean {
+  if (process.platform !== "win32") return false;
+  const wt = findWindowsTerminal();
+  if (!wt || !existsSync(STANDALONE_ENTRY)) return false;
 
-  if (args.includes("global")) {
-    initialScope = "global";
+  const args = [
+    "-w", "new",
+    "--title", "pi-token",
+    process.execPath,
+    "--experimental-strip-types", "--no-warnings",
+    STANDALONE_ENTRY,
+    "--cwd", options.cwd,
+    "--scope", options.scope,
+    "--tab", options.tab,
+  ];
+  try {
+    const child = spawn(wt, args, { detached: true, stdio: "ignore", windowsHide: false });
+    child.on("error", () => {});
+    child.unref();
+    return true;
+  } catch {
+    return false;
   }
-  if (args.includes("tokscale") || args.includes("overview") || args.includes("spend")) {
-    initialTab = "overview";
+}
+
+async function openOverlay(ctx: ExtensionCommandContext, options: LaunchOptions): Promise<void> {
+  const filter: TimeFilter = { mode: "7d", dayOffset: 0, label: "7 Days" };
+  const snapshot = await loadSnapshot(options.cwd, options.scope, filter);
+
+  await ctx.ui.custom<void>((tui: any, _theme: any, _keybindings: any, done: () => void) => {
+    const view = new TokenView({
+      snapshot,
+      done,
+      getTerminalRows: () => tui.rows || 30,
+      initialTab: options.tab,
+      onRefresh: (scope, nextFilter) => loadSnapshot(options.cwd, scope, nextFilter),
+      onUpdate: () => tui.requestRender(),
+    });
+    return {
+      render: (width: number) => view.render(width).map((line) => String(line ?? "")),
+      handleInput: (data: string) => {
+        view.handleInput(data);
+        tui.requestRender();
+      },
+      invalidate: () => view.invalidate(),
+    };
+  });
+}
+
+/** /token [usage|overview] [global] [here]  — opens a separate window by default; `here` forces the in-Pi overlay. */
+export async function runToken(_pi: ExtensionAPI, rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
+  const words = (rawArgs || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const options: LaunchOptions = {
+    cwd: ctx.cwd || process.cwd(),
+    scope: words.includes("global") ? "global" : "repo",
+    tab: words.includes("overview") || words.includes("spend") ? "overview" : "usage",
+  };
+
+  if (!words.includes("here") && launchWindow(options)) {
+    ctx.ui.notify("pi-token opened in a new window (/token here for in-terminal view)", "info");
+    return;
   }
-
-  const initialFilter: TimeFilter = { mode: "7d", dayOffset: 0, label: "7 Days" };
-  const initialSnapshot = await loadSnapshot(ctx, initialScope, initialFilter);
-
-  // Open custom interactive TUI overlay
-  await ctx.ui.custom<{ done: () => void }>(
-    (tui: any, theme: any, _kb: any, done: () => void) => {
-      const view = new TokScaleView({
-        snapshot: initialSnapshot,
-        done,
-        getTerminalRows: () => tui.rows || 30,
-        initialTab,
-        onRefresh: async (scope, filter) => {
-          return await loadSnapshot(ctx, scope, filter);
-        },
-      });
-
-      return {
-        render: (w: number) => {
-          const lines = view.render(w);
-          return lines.map((l) => (typeof l === "string" ? l : String(l ?? "")));
-        },
-        handleInput: (data: string) => {
-          view.handleInput(data);
-          tui.requestRender();
-        },
-        invalidate: () => view.invalidate(),
-      };
-    }
-  );
+  await openOverlay(ctx, options);
 }

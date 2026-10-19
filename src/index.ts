@@ -2,17 +2,18 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 export default function (pi: ExtensionAPI) {
   const handler = async (rawArgs: string, ctx: ExtensionCommandContext) => {
-    const { runPulse } = await import("./runner.js");
-    await runPulse(pi, rawArgs, ctx);
+    const { runToken } = await import("./runner.ts");
+    await runToken(pi, rawArgs, ctx);
   };
 
   pi.registerCommand("token", {
-    description: "TokScale on Steroids: Connected Provider Quotas & Real-Time Burn Dashboard",
+    description: "Token on Steroids: Connected Provider Quotas & Real-Time Burn Dashboard",
     getArgumentCompletions: (prefix: string) => {
       const trimmed = (prefix || "").trim().toLowerCase();
       const options = [
         { value: "usage", label: "usage", description: "Connected provider plans & quota windows" },
-        { value: "overview", label: "overview", description: "2-Column TokScale spend & tool activity" },
+        { value: "overview", label: "overview", description: "2-Column Token spend & tool activity" },
+        { value: "here", label: "here", description: "Show in this terminal instead of a new window" },
         { value: "global", label: "global", description: "Open in Global machine scope" },
       ];
       const matches = options.filter((o) => o.value.startsWith(trimmed));
@@ -23,7 +24,7 @@ export default function (pi: ExtensionAPI) {
 
   // Alias /tokens for muscle memory
   pi.registerCommand("tokens", {
-    description: "TokScale on Steroids: Connected Provider Quotas & Real-Time Burn Dashboard",
+    description: "Token on Steroids: Connected Provider Quotas & Real-Time Burn Dashboard",
     handler,
   });
 }

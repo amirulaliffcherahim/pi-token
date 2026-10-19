@@ -1,4 +1,4 @@
-export type PulseScope = "repo" | "global";
+export type TokenScope = "repo" | "global";
 
 export type TimeFilterMode = "day" | "all" | "7d" | "30d";
 
@@ -8,7 +8,7 @@ export interface TimeFilter {
   label: string;
 }
 
-export type TokScaleTab =
+export type TokenTab =
   | "usage"     // 1. Quota & Limits
   | "overview"  // 2. 2-Col Burn & Tool breakdown
   | "models"    // 3. Models comparison table
@@ -127,7 +127,7 @@ export interface ToolCallsRow {
   calls: number;
 }
 
-export interface TokScaleOverview {
+export interface TokenOverview {
   periodLabel: string;
   totalCost: number;
   totalCalls: number;
@@ -151,10 +151,10 @@ export interface TokScaleOverview {
   shellCommands: ToolCallsRow[];
 }
 
-export interface PulseSnapshot {
+export interface TokenSnapshot {
   timestamp: Date;
-  activeScope: PulseScope;
+  activeScope: TokenScope;
   plans: PlanInfo[];
-  overview: TokScaleOverview;
+  overview: TokenOverview;
   daemonRunning: boolean;
 }

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { PlanInfo, QuotaBucket, QuotaGroup, RateLimitWindow } from "../types.js";
+import type { PlanInfo, QuotaBucket, QuotaGroup, RateLimitWindow } from "../types.ts";
 
 function maskIdentifier(val: string): string {
   if (!val) return "unknown";

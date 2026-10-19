@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { getDb } from "./db.js";
+import { getDb } from "./db.ts";
 
 function getSessionsDir(): string {
   return path.join(os.homedir(), ".pi", "agent", "sessions");

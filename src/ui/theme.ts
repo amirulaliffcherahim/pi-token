@@ -13,11 +13,11 @@ export const C = {
   purple: "\x1b[38;2;192;132;252m",
   magenta: "\x1b[38;2;244;114;182m",
   blue: "\x1b[38;2;96;165;250m",
-  gray: "\x1b[38;2;148;163;184m",
-  darkGray: "\x1b[38;2;71;85;105m",
+  gray: "\x1b[38;2;176;190;210m",
+  darkGray: "\x1b[38;2;110;125;150m",
   white: "\x1b[38;2;248;250;252m",
 
-  // TokScale custom palette
+  // Token custom palette
   brandOrange: "\x1b[38;2;245;158;11m",
   brandGold: "\x1b[38;2;234;179;8m",
   brandCyan: "\x1b[38;2;56;189;248m",
@@ -33,8 +33,8 @@ export const C = {
   boxGray: "\x1b[38;2;71;85;105m",
 };
 
-/** Render TokScale segmented bar (blue -> cyan -> yellow -> orange) */
-export function renderTokScaleBar(ratio: number, width: number = 10): string {
+/** Render Token segmented bar (blue -> cyan -> yellow -> orange) */
+export function renderTokenBar(ratio: number, width: number = 10): string {
   const r = Math.max(0, Math.min(1, ratio));
   const filled = Math.max(0, Math.round(r * width));
   const empty = Math.max(0, width - filled);
@@ -77,4 +77,38 @@ export function padToCellWidth(str: string, width: number): string {
   const vis = visibleLength(str);
   if (vis >= width) return str;
   return str + " ".repeat(width - vis);
+}
+
+/** Plain-text fit: truncate with ellipsis or pad. Call BEFORE adding colour codes. */
+export function fit(text: string, width: number): string {
+  if (width <= 0) return "";
+  if (text.length > width) return width > 1 ? text.slice(0, width - 1) + "…" : text.slice(0, width);
+  return text + " ".repeat(width - text.length);
+}
+
+/** Health colour for a remaining fraction: green > 50%, amber 25-50%, red < 25%. */
+export function healthColor(remainingFraction: number): string {
+  if (remainingFraction > 0.5) return C.green;
+  if (remainingFraction > 0.25) return C.amber;
+  return C.red;
+}
+
+/** Quota bar: colour follows health (not position); empty track stays visible. */
+export function renderQuotaBar(remainingFraction: number, width: number = 12): string {
+  const r = Math.max(0, Math.min(1, remainingFraction));
+  const filled = Math.round(r * width);
+  return `${healthColor(r)}${"█".repeat(filled)}${C.darkGray}${"░".repeat(width - filled)}${C.reset}`;
+}
+
+/** "2h 15m" / "3d 4h" / "now" from an ISO timestamp; "—" when absent. */
+export function formatReset(iso?: string | Date): string {
+  if (!iso) return "—";
+  const ts = iso instanceof Date ? iso.getTime() : Date.parse(iso);
+  if (!Number.isFinite(ts)) return "—";
+  const mins = Math.round((ts - Date.now()) / 60_000);
+  if (mins <= 0) return "now";
+  const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }

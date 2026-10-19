@@ -1,4 +1,4 @@
-import { getDb } from "./db.js";
+import { getDb } from "./db.ts";
 import type {
   ActivityBreakdownRow,
   DailyActivityRow,
@@ -6,18 +6,18 @@ import type {
   ModelDetailRow,
   ModelSpendRow,
   ProjectSpendRow,
-  PulseScope,
+  TokenScope,
   SessionDetailRow,
   TimeFilter,
-  TokScaleOverview,
+  TokenOverview,
   ToolCallsRow,
-} from "../types.js";
+} from "../types.ts";
 
-export function getTokScaleOverview(
-  scope: PulseScope,
+export function getTokenOverview(
+  scope: TokenScope,
   workspaceFilter: string,
   filter: TimeFilter
-): TokScaleOverview {
+): TokenOverview {
   const db = getDb();
 
   let timeClause = "1=1";
