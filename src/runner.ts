@@ -15,17 +15,12 @@ interface LaunchOptions {
   tab: TokenTab;
 }
 
-/** Windows Terminal ships as a per-user app alias, so it is not always on PATH for child processes. */
-function findWindowsTerminal(): string | undefined {
-  const alias = join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WindowsApps", "wt.exe");
-  return existsSync(alias) ? alias : undefined;
-}
-
-/** Opens the dashboard in its own window. Returns false when no launcher is available so the caller can fall back. */
-function launchWindow(options: LaunchOptions): boolean {
-  if (process.platform !== "win32") return false;
-  const wt = findWindowsTerminal();
-  if (!wt || !existsSync(STANDALONE_ENTRY)) return false;
+/**
+ * Opens the dashboard in its own window. Resolves false when no launcher is available so the caller can fall back.
+ * wt.exe is an app-execution alias: fs.stat/existsSync fail on it, so spawn it and trust the spawn/error events instead.
+ */
+function launchWindow(options: LaunchOptions): Promise<boolean> {
+  if (process.platform !== "win32" || !existsSync(STANDALONE_ENTRY)) return Promise.resolve(false);
 
   const args = [
     "-w", "new",
@@ -37,14 +32,25 @@ function launchWindow(options: LaunchOptions): boolean {
     "--scope", options.scope,
     "--tab", options.tab,
   ];
-  try {
-    const child = spawn(wt, args, { detached: true, stdio: "ignore", windowsHide: false });
-    child.on("error", () => {});
-    child.unref();
-    return true;
-  } catch {
-    return false;
-  }
+  const candidates = ["wt.exe", join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WindowsApps", "wt.exe")];
+  return tryLaunch(candidates, args);
+}
+
+function tryLaunch(candidates: string[], args: string[]): Promise<boolean> {
+  const [command, ...rest] = candidates;
+  if (!command) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: false });
+      child.once("error", () => resolve(tryLaunch(rest, args)));
+      child.once("spawn", () => {
+        child.unref();
+        resolve(true);
+      });
+    } catch {
+      resolve(tryLaunch(rest, args));
+    }
+  });
 }
 
 async function openOverlay(ctx: ExtensionCommandContext, options: LaunchOptions): Promise<void> {
@@ -80,7 +86,7 @@ export async function runToken(_pi: ExtensionAPI, rawArgs: string, ctx: Extensio
     tab: words.includes("overview") || words.includes("spend") ? "overview" : "usage",
   };
 
-  if (!words.includes("here") && launchWindow(options)) {
+  if (!words.includes("here") && (await launchWindow(options))) {
     ctx.ui.notify("pi-token opened in a new window (/token here for in-terminal view)", "info");
     return;
   }
