@@ -1,0 +1,150 @@
+export type PulseScope = "repo" | "global";
+
+export type TimeFilterMode = "day" | "all" | "7d" | "30d";
+
+export interface TimeFilter {
+  mode: TimeFilterMode;
+  dayOffset: number; // 0 = today, -1 = yesterday, etc.
+  label: string;
+}
+
+export interface RateLimitWindow {
+  allowed: boolean;
+  usedPercent: number;
+  limitWindowSeconds?: number;
+  resetAfterSeconds?: number;
+  resetAt?: Date;
+}
+
+export interface SecondaryRateLimit {
+  name: string;
+  usedPercent: number;
+  resetAfterSeconds?: number;
+}
+
+export interface QuotaBucket {
+  name: string;
+  remainingFraction: number; // 0..1 (e.g. 0.98 = 98% left)
+  resetTime?: string;
+  unit?: string;
+}
+
+export interface QuotaGroup {
+  groupName: string;
+  buckets: QuotaBucket[];
+}
+
+export interface BalanceInfo {
+  currency: string;
+  totalBalance: number;
+  grantedBalance?: number;
+  toppedUpBalance?: number;
+}
+
+export interface PlanInfo {
+  id: "claude" | "agy" | "deepseek" | "subq" | "openai" | string;
+  name: string;
+  account: string;
+  planType: string;
+  status: "active" | "limited" | "connected" | "error" | "offline";
+  statusText?: string;
+  primaryLimit?: RateLimitWindow;
+  secondaryLimits?: SecondaryRateLimit[];
+  quotaGroups?: QuotaGroup[];
+  balance?: BalanceInfo;
+  resetsAvailable?: number;
+  lastUpdated: Date;
+}
+
+export interface ProviderSpendSummary {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  cacheSavings: number;
+  calls: number;
+}
+
+export interface DailyActivityRow {
+  date: string;
+  cost: number;
+  calls: number;
+  tokens: number;
+}
+
+export interface ProjectSpendRow {
+  project: string;
+  cost: number;
+  sessions: number;
+}
+
+export interface ModelSpendRow {
+  model: string;
+  cost: number;
+  calls: number;
+}
+
+export interface ActivityBreakdownRow {
+  name: string;
+  cost: number;
+  turns: number;
+  pct: number;
+}
+
+export interface ToolCallsRow {
+  name: string;
+  calls: number;
+}
+
+export interface PeriodSpend {
+  cost: number;
+  calls: number;
+  tokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cacheSavings: number;
+}
+
+export interface TokScaleOverview {
+  periodLabel: string;
+  totalCost: number;
+  totalCalls: number;
+  totalSessions: number;
+  cacheHitRate: number; // e.g. 94%
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  writtenTokens: number;
+  burnVelocityUsdPerHour: number;
+  burnVelocityTokensPerMin: number;
+
+  dailyActivity: DailyActivityRow[];
+  byProject: ProjectSpendRow[];
+  byModel: ModelSpendRow[];
+  byActivity: ActivityBreakdownRow[];
+  coreTools: ToolCallsRow[];
+  shellCommands: ToolCallsRow[];
+}
+
+export interface ActiveSession {
+  sessionId: string;
+  workspace: string;
+  lastModel: string;
+  lastTimestamp: number;
+  idleSeconds: number;
+  totalCost: number;
+  totalTokens: number;
+}
+
+export interface PulseSnapshot {
+  timestamp: Date;
+  activeScope: PulseScope;
+  plans: PlanInfo[];
+  overview: TokScaleOverview;
+  activeSessions: ActiveSession[];
+  daemonRunning: boolean;
+}

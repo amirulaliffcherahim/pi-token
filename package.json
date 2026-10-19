@@ -1,0 +1,49 @@
+{
+  "name": "pi-limit",
+  "version": "2.0.0",
+  "description": "TokScale on steroids for Pi Coding Agent — Auto-detects connected accounts & providers (Claude Pro/Team, Antigravity, DeepSeek, SubQ, OpenAI), live quota reset windows, real-time burn velocity, 2-column analytics dashboard & telemetry engine",
+  "author": "amirulaliffcherahim",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amirulaliffcherahim/pi-limit.git"
+  },
+  "homepage": "https://github.com/amirulaliffcherahim/pi-limit#readme",
+  "bugs": {
+    "url": "https://github.com/amirulaliffcherahim/pi-limit/issues"
+  },
+  "type": "module",
+  "main": "./src/index.ts",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "tokscale",
+    "limits",
+    "quota",
+    "telemetry",
+    "claude",
+    "antigravity",
+    "deepseek",
+    "subq",
+    "costs"
+  ],
+  "files": [
+    "LICENSE",
+    "README.md",
+    "src",
+    "tsconfig.json"
+  ],
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.80.0",
+    "@earendil-works/pi-coding-agent": ">=0.80.0",
+    "@earendil-works/pi-tui": ">=0.80.0"
+  }
+}
