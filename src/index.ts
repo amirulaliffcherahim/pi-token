@@ -6,12 +6,12 @@ export default function (pi: ExtensionAPI) {
     await runPulse(pi, rawArgs, ctx);
   };
 
-  pi.registerCommand("limit", {
-    description: "TokScale on Steroids: Auto-detects Connected Provider Quotas & Real-Time Burn Dashboard",
+  pi.registerCommand("token", {
+    description: "TokScale on Steroids: Connected Provider Quotas & Real-Time Burn Dashboard",
     getArgumentCompletions: (prefix: string) => {
       const trimmed = (prefix || "").trim().toLowerCase();
       const options = [
-        { value: "plans", label: "plans", description: "Connected provider plans & reset windows" },
+        { value: "usage", label: "usage", description: "Connected provider plans & quota windows" },
         { value: "overview", label: "overview", description: "2-Column TokScale spend & tool activity" },
         { value: "global", label: "global", description: "Open in Global machine scope" },
       ];
@@ -21,9 +21,9 @@ export default function (pi: ExtensionAPI) {
     handler,
   });
 
-  // Also register /limits for muscle memory
-  pi.registerCommand("limits", {
-    description: "TokScale on Steroids: Auto-detects Connected Provider Quotas & Real-Time Burn Dashboard",
+  // Alias /tokens for muscle memory
+  pi.registerCommand("tokens", {
+    description: "TokScale on Steroids: Connected Provider Quotas & Real-Time Burn Dashboard",
     handler,
   });
 }

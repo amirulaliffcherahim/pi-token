@@ -1,29 +1,33 @@
-# pi-limit ⚡ (TokScale on Steroids for Pi)
+# pi-token ⚡ (TokScale on Steroids for Pi)
 
-A high-performance TokScale-inspired limit, quota, and spend telemetry extension for [Pi Coding Agent](https://pi.dev).
+A high-performance TokScale-inspired quota, limits, and spend telemetry extension for [Pi Coding Agent](https://pi.dev).
 
 ## Highlights
-- **Auto-Detect Accounts & Providers**: Automatically inspects `~/.pi/agent/auth.json` to monitor:
-  - **Anthropic Claude**: Pro / Team session & 7-day rate-limit windows (`/api/oauth/usage`).
-  - **Google Antigravity (agy)**: Model quota percentages (Opus 5.5, Sonnet, Gemini 3.8 Flash, Gemini Thinking) & tier availability.
-  - **DeepSeek**: Real-time USD balance & topped-up credit balance (`/user/balance`).
-  - **SubQ Gate**: SubQ Snap safety/compliance fast gate status.
-  - **OpenAI / Codex**: API status & tokens.
-- **TokScale 2-Column Dashboard**:
-  - **Hero Summary**: Period spend ($), total calls, total sessions, cache hit rate (%), burn velocity ($/hr and tokens/min).
+- **Tab 1: Usage Limits & Connected Accounts (Default)**
+  - TokScale native architecture: Overall System Readiness Card, Inspector Card, and full Accounts Table.
+  - Interactive selection: `[↑]` / `[↓]` moves active account in the table and updates the Inspector Card.
+  - Normalizes three distinct provider data models:
+    - **Windowed Quotas**: Anthropic Claude (5h session, 7d weekly) & Google Antigravity (per-model remaining % and reset countdowns).
+    - **Monetary Balances**: DeepSeek real-time USD balance & granted/topped-up credits.
+    - **Safety Gates**: SubQ Snap fast gate compliance status.
+  - Privacy mode: `[e]` to toggle masked/visible account emails and keys.
+- **Tab 2: TokScale 2-Column Overview Dashboard**
+  - **Hero Summary**: Period spend ($), total calls, total sessions, % cache hit, burn velocity ($/hr and tokens/min).
   - **Daily Activity**: Cost, calls, and segmented usage bars.
   - **By Activity**: Coding, Debugging, Refactoring, Conversation breakdown with 1-shot completion rates.
   - **Core Tools & Shell Commands**: Live counters for `read`, `edit`, `bash`, `git`, and runtimes.
   - **By Project & Model**: Top workspaces and model spend rankings.
-- **Interactive TUI**:
-  - `[1]` Usage Limits & Quota Tab (Default)
-  - `[2]` TokScale 2-Column Overview Tab
-  - `[t]` Cycle Time Period (`Today` -> `7 Days` -> `30 Days` -> `All-Time`)
-  - `[s]` Toggle Scope (`Current Workspace` vs `Global Machine`)
-  - `[r]` Refresh
-  - `[q]` / `[Esc]` Exit
+- **Interactive Controls**:
+  - `[↑] / [↓]` — Select account in table
+  - `[1]` — Usage Limits tab
+  - `[2]` — TokScale Overview tab
+  - `[t]` — Cycle Period (`Today` -> `7 Days` -> `30 Days` -> `All-Time`)
+  - `[s]` — Toggle Scope (`Current Workspace` vs `Global Machine`)
+  - `[e]` — Toggle Email Masking
+  - `[r]` — Refresh
+  - `[q]` / `[Esc]` — Exit
 
 ## Commands
-- `/limit` or `/limits` — Launch dashboard (defaults to Limits tab).
-- `/limit overview` — Open directly to TokScale 2-column view.
-- `/limit global` — Open in global scope.
+- `/token` or `/tokens` — Launch TokScale dashboard (defaults to Usage Limits tab).
+- `/token overview` — Open directly to 2-column TokScale analytics.
+- `/token global` — Open in global machine scope.

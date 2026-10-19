@@ -33,28 +33,10 @@ export const C = {
   boxGray: "\x1b[38;2;71;85;105m",
 };
 
-/** Render Tokscale-styled gradient horizontal bar (e.g. ▰▰▰▱▱) */
-export function renderGradientBar(ratio: number, width: number = 14): string {
-  const r = Math.max(0, Math.min(1, ratio));
-  const filled = Math.round(r * width);
-  const empty = width - filled;
-
-  const filledChars = "█".repeat(filled);
-  const emptyChars = "░".repeat(empty);
-
-  // Gradient tint
-  let color = C.cyan;
-  if (r > 0.85) color = C.red;
-  else if (r > 0.65) color = C.orange;
-  else if (r > 0.35) color = C.amber;
-
-  return `${color}${filledChars}${C.darkGray}${emptyChars}${C.reset}`;
-}
-
 /** Render TokScale segmented bar (blue -> cyan -> yellow -> orange) */
 export function renderTokScaleBar(ratio: number, width: number = 10): string {
   const r = Math.max(0, Math.min(1, ratio));
-  const filled = Math.max(1, Math.round(r * width));
+  const filled = Math.max(0, Math.round(r * width));
   const empty = Math.max(0, width - filled);
 
   let bar = "";
@@ -84,11 +66,15 @@ export function formatCost(cost: number): string {
   return "$0.00";
 }
 
-export function fitWidth(str: string, width: number): string {
-  // Strip ANSI to measure visual width
-  const clean = str.replace(/\x1b\[[0-9;]*m/g, "");
-  if (clean.length > width) {
-    return clean.slice(0, width);
-  }
-  return str + " ".repeat(width - clean.length);
+/** Robust visible width measurement without ANSI escape sequences */
+export function visibleLength(str: unknown): number {
+  if (typeof str !== "string") return 0;
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").length;
+}
+
+export function padToCellWidth(str: string, width: number): string {
+  const vis = visibleLength(str);
+  if (vis >= width) return str;
+  return str + " ".repeat(width - vis);
 }

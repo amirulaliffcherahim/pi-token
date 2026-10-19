@@ -38,7 +38,7 @@ export async function runPulse(
   const args = (rawArgs || "").trim().toLowerCase();
 
   let initialScope: PulseScope = "repo";
-  let initialTab: "limits" | "overview" = "limits";
+  let initialTab: "usage" | "overview" = "usage";
 
   if (args.includes("global")) {
     initialScope = "global";
@@ -52,7 +52,7 @@ export async function runPulse(
 
   // Open custom interactive TUI overlay
   await ctx.ui.custom<{ done: () => void }>(
-    (tui: any, done: () => void) => {
+    (tui: any, theme: any, _kb: any, done: () => void) => {
       const view = new TokScaleView({
         snapshot: initialSnapshot,
         done,
@@ -64,8 +64,14 @@ export async function runPulse(
       });
 
       return {
-        render: (w: number) => view.render(w),
-        handleInput: (data: string) => view.handleInput(data),
+        render: (w: number) => {
+          const lines = view.render(w);
+          return lines.map((l) => (typeof l === "string" ? l : String(l ?? "")));
+        },
+        handleInput: (data: string) => {
+          view.handleInput(data);
+          tui.requestRender();
+        },
         invalidate: () => view.invalidate(),
       };
     }
