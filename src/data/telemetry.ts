@@ -2,9 +2,12 @@ import { getDb } from "./db.js";
 import type {
   ActivityBreakdownRow,
   DailyActivityRow,
+  HourlyActivityRow,
+  ModelDetailRow,
   ModelSpendRow,
   ProjectSpendRow,
   PulseScope,
+  SessionDetailRow,
   TimeFilter,
   TokScaleOverview,
   ToolCallsRow,
@@ -22,17 +25,16 @@ export function getTokScaleOverview(
 
   const now = new Date();
   if (filter.mode === "day") {
-    // Offset days
     const d = new Date(now.getTime() + filter.dayOffset * 86_400_000);
     const dateStr = d.toISOString().slice(0, 10);
     timeClause = "date(timestamp/1000, 'unixepoch') = ?";
     params.push(dateStr);
   } else if (filter.mode === "7d") {
-    const past7 = Math.floor((now.getTime() - 7 * 86_400_000));
+    const past7 = Math.floor(now.getTime() - 7 * 86_400_000);
     timeClause = "timestamp >= ?";
     params.push(past7);
   } else if (filter.mode === "30d") {
-    const past30 = Math.floor((now.getTime() - 30 * 86_400_000));
+    const past30 = Math.floor(now.getTime() - 30 * 86_400_000);
     timeClause = "timestamp >= ?";
     params.push(past30);
   }
@@ -68,28 +70,58 @@ export function getTokScaleOverview(
   const totalContext = inTok + cReadTok;
   const cacheHitRate = totalContext > 0 ? Math.round((cReadTok / totalContext) * 100) : 0;
 
-  // 2. Daily Activity (Last 7 days or matching range)
+  // 2. Daily Activity (up to 14 days)
   const dailyRows: any[] = db.prepare(`
     SELECT
       date(timestamp/1000, 'unixepoch') as d,
       SUM(cost_total) as cost,
       COUNT(*) as calls,
-      SUM(total_tokens) as tokens
+      SUM(total_tokens) as tokens,
+      SUM(input_tokens) as inTok,
+      SUM(output_tokens) as outTok,
+      SUM(cache_read_tokens) as cReadTok
     FROM messages
     WHERE ${scopeClause}
     GROUP BY d
     ORDER BY d DESC
-    LIMIT 7
+    LIMIT 14
   `).all(...(scope === "repo" && workspaceFilter ? [`%${workspaceFilter.replace(/\\/g, "/")}%`] : []));
 
-  const dailyActivity: DailyActivityRow[] = dailyRows.map((r) => ({
-    date: r.d ? r.d.slice(5) : "",
+  const dailyActivity: DailyActivityRow[] = dailyRows.map((r) => {
+    const ctx = (r.inTok || 0) + (r.cReadTok || 0);
+    const hit = ctx > 0 ? Math.round(((r.cReadTok || 0) / ctx) * 100) : 0;
+    return {
+      date: r.d || "",
+      cost: r.cost || 0,
+      calls: r.calls || 0,
+      tokens: r.tokens || 0,
+      inputTokens: r.inTok || 0,
+      outputTokens: r.outTok || 0,
+      cacheHitRate: hit,
+    };
+  });
+
+  // 3. Hourly Activity (24-hour diurnal profile)
+  const hourlyRows: any[] = db.prepare(`
+    SELECT
+      strftime('%H', timestamp/1000, 'unixepoch') as hr,
+      SUM(cost_total) as cost,
+      COUNT(*) as calls,
+      SUM(total_tokens) as tokens
+    FROM messages
+    WHERE ${scopeClause}
+    GROUP BY hr
+    ORDER BY hr ASC
+  `).all(...(scope === "repo" && workspaceFilter ? [`%${workspaceFilter.replace(/\\/g, "/")}%`] : []));
+
+  const hourlyActivity: HourlyActivityRow[] = hourlyRows.map((r) => ({
+    hour: r.hr || "00",
     cost: r.cost || 0,
     calls: r.calls || 0,
     tokens: r.tokens || 0,
   }));
 
-  // 3. By Project
+  // 4. By Project
   const projRows: any[] = db.prepare(`
     SELECT
       workspace as proj,
@@ -99,7 +131,7 @@ export function getTokScaleOverview(
     WHERE ${timeClause}
     GROUP BY proj
     ORDER BY cost DESC
-    LIMIT 6
+    LIMIT 10
   `).all(...(filter.mode === "day" || filter.mode === "7d" || filter.mode === "30d" ? [params[0]] : []));
 
   const byProject: ProjectSpendRow[] = projRows.map((r) => ({
@@ -108,17 +140,22 @@ export function getTokScaleOverview(
     sessions: r.sess || 0,
   }));
 
-  // 4. By Model
+  // 5. By Model
   const modelRows: any[] = db.prepare(`
     SELECT
       model_id as model,
+      provider,
+      SUM(input_tokens) as inp,
+      SUM(output_tokens) as out,
+      SUM(cache_read_tokens) as cr,
+      SUM(total_tokens) as tot,
       SUM(cost_total) as cost,
       COUNT(*) as calls
     FROM messages
     WHERE ${timeClause} AND ${scopeClause}
     GROUP BY model
     ORDER BY cost DESC
-    LIMIT 6
+    LIMIT 12
   `).all(...params);
 
   const byModel: ModelSpendRow[] = modelRows.map((r) => ({
@@ -127,7 +164,55 @@ export function getTokScaleOverview(
     calls: r.calls || 0,
   }));
 
-  // 5. Burn Velocity (Last 1 hour)
+  const detailedModels: ModelDetailRow[] = modelRows.map((r) => {
+    const ctx = (r.inp || 0) + (r.cr || 0);
+    const hit = ctx > 0 ? Math.round(((r.cr || 0) / ctx) * 100) : 0;
+    return {
+      model: r.model || "unknown",
+      provider: r.provider || "Unknown",
+      inputTokens: r.inp || 0,
+      outputTokens: r.out || 0,
+      cachedTokens: r.cr || 0,
+      totalTokens: r.tot || 0,
+      cost: r.cost || 0,
+      calls: r.calls || 0,
+      cacheHitRate: hit,
+    };
+  });
+
+  // 6. Detailed Recent Sessions
+  const sessionRows: any[] = db.prepare(`
+    SELECT
+      session_id as sId,
+      workspace as ws,
+      model_id as mId,
+      COUNT(*) as calls,
+      SUM(cost_total) as cost,
+      SUM(total_tokens) as tokens,
+      MAX(timestamp) as lastTs
+    FROM messages
+    WHERE ${scopeClause}
+    GROUP BY session_id
+    ORDER BY lastTs DESC
+    LIMIT 15
+  `).all(...(scope === "repo" && workspaceFilter ? [`%${workspaceFilter.replace(/\\/g, "/")}%`] : []));
+
+  const detailedSessions: SessionDetailRow[] = sessionRows.map((r) => {
+    const d = new Date(r.lastTs || Date.now());
+    const timeStr = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const wsLabel = (r.ws || "root").split(/[\\/]/).filter(Boolean).slice(-2).join("/");
+    return {
+      sessionId: r.sId || "",
+      workspace: wsLabel,
+      model: r.mId || "",
+      calls: r.calls || 0,
+      cost: r.cost || 0,
+      tokens: r.tokens || 0,
+      lastActive: timeStr,
+    };
+  });
+
+  // 7. Burn Velocity (Last 1 hour)
   const oneHourAgo = Date.now() - 3600_000;
   const hourRow: any = db.prepare(`
     SELECT
@@ -140,7 +225,7 @@ export function getTokScaleOverview(
   const burnVelocityUsdPerHour = hourRow.hourCost || 0;
   const burnVelocityTokensPerMin = Math.round((hourRow.hourTokens || 0) / 60);
 
-  // 6. Synthetic Activity categories (TokScale-style breakdown)
+  // 8. Synthetic Activity categories
   const codingTurns = Math.round(totalCalls * 0.42);
   const debugTurns = Math.round(totalCalls * 0.22);
   const refactorTurns = Math.round(totalCalls * 0.16);
@@ -153,7 +238,7 @@ export function getTokScaleOverview(
     { name: "Conversation", cost: totalCost * 0.12, turns: convTurns, pct: 0 },
   ];
 
-  // 7. Core Tools & Shell breakdown (TokScale-style)
+  // 9. Core Tools & Shell breakdown
   const coreTools: ToolCallsRow[] = [
     { name: "read", calls: Math.round(totalCalls * 0.48) },
     { name: "edit", calls: Math.round(totalCalls * 0.28) },
@@ -181,8 +266,11 @@ export function getTokScaleOverview(
     burnVelocityUsdPerHour,
     burnVelocityTokensPerMin,
     dailyActivity,
+    hourlyActivity,
     byProject,
     byModel,
+    detailedModels,
+    detailedSessions,
     byActivity,
     coreTools,
     shellCommands,

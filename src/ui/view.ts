@@ -1,4 +1,4 @@
-import type { PlanInfo, PulseScope, PulseSnapshot, TimeFilter } from "../types.js";
+import type { PlanInfo, PulseScope, PulseSnapshot, TimeFilter, TokScaleTab } from "../types.js";
 import {
   C,
   formatCost,
@@ -8,18 +8,18 @@ import {
   visibleLength,
 } from "./theme.js";
 
-function boxTop(title: string, width: number, borderColor: string = C.boxOrange): string {
+function boxTop(title: string, width: number, borderColor: string = C.boxBlue): string {
   const t = title ? ` ${title} ` : "";
   const tLen = t.length;
   const rem = Math.max(0, width - tLen - 3);
-  return `${borderColor}╭${C.bold}${C.white}${t}${C.reset}${borderColor}${"─".repeat(rem)}╮${C.reset}`;
+  return `${borderColor}┌${C.bold}${C.white}${t}${C.reset}${borderColor}${"─".repeat(rem)}┐${C.reset}`;
 }
 
-function boxBottom(width: number, borderColor: string = C.boxOrange): string {
-  return `${borderColor}╰${"─".repeat(Math.max(0, width - 2))}╯${C.reset}`;
+function boxBottom(width: number, borderColor: string = C.boxBlue): string {
+  return `${borderColor}└${"─".repeat(Math.max(0, width - 2))}┘${C.reset}`;
 }
 
-function boxLine(content: string, innerWidth: number, borderColor: string = C.boxOrange): string {
+function boxLine(content: string, innerWidth: number, borderColor: string = C.boxBlue): string {
   const safeStr = typeof content === "string" ? content : String(content ?? "");
   const vis = visibleLength(safeStr);
   const pad = Math.max(0, innerWidth - vis);
@@ -40,10 +40,11 @@ function zipLinesSideBySide(left: string[], right: string[], leftW: number, righ
 }
 
 export class TokScaleView {
-  private activeTab: "usage" | "overview" = "usage"; // First tab is Usage Limits by default!
+  private activeTab: TokScaleTab = "usage"; // Usage tab by default for live plan status!
   private currentScope: PulseScope = "repo";
   private currentTimeFilter: TimeFilter = { mode: "7d", dayOffset: 0, label: "7 Days" };
   private selectedAccountIndex: number = 0;
+  private scrollOffset: number = 0;
   private maskEmails: boolean = true;
   private snapshot: PulseSnapshot;
   private isRefreshing = false;
@@ -56,7 +57,7 @@ export class TokScaleView {
     done: () => void;
     getTerminalRows: () => number;
     onRefresh: (scope: PulseScope, filter: TimeFilter) => Promise<PulseSnapshot>;
-    initialTab?: "usage" | "overview";
+    initialTab?: TokScaleTab;
   }) {
     this.snapshot = options.snapshot;
     this.currentScope = options.snapshot.activeScope;
@@ -78,34 +79,45 @@ export class TokScaleView {
   }
 
   public handleInput(data: string): void {
-    // Escape or q or Ctrl+C
+    // Exit: q or Esc or Ctrl+C
     if (data === "q" || data === "Q" || data === "\x1b" || data === "\x03") {
       this.done();
       return;
     }
 
-    // Up / Down arrow navigation for accounts table
+    // Direct tab jumps: 1=Usage, 2=Overview, 3=Models, 4=Daily, 5=Hourly, 6=Sessions
+    if (data === "1") { this.activeTab = "usage"; this.scrollOffset = 0; return; }
+    if (data === "2") { this.activeTab = "overview"; this.scrollOffset = 0; return; }
+    if (data === "3") { this.activeTab = "models"; this.scrollOffset = 0; return; }
+    if (data === "4") { this.activeTab = "daily"; this.scrollOffset = 0; return; }
+    if (data === "5") { this.activeTab = "hourly"; this.scrollOffset = 0; return; }
+    if (data === "6") { this.activeTab = "sessions"; this.scrollOffset = 0; return; }
+
+    // Cycle tabs with Tab / Backtab
+    if (data === "\t") {
+      const tabs: TokScaleTab[] = ["usage", "overview", "models", "daily", "hourly", "sessions"];
+      const nextIdx = (tabs.indexOf(this.activeTab) + 1) % tabs.length;
+      this.activeTab = tabs[nextIdx];
+      this.scrollOffset = 0;
+      return;
+    }
+
+    // Up / Down navigation
     if (data === "\x1b[A" || data === "k") {
-      if (this.selectedAccountIndex > 0) {
-        this.selectedAccountIndex--;
+      if (this.activeTab === "usage") {
+        if (this.selectedAccountIndex > 0) this.selectedAccountIndex--;
+      } else {
+        this.scrollOffset = Math.max(0, this.scrollOffset - 1);
       }
       return;
     }
     if (data === "\x1b[B" || data === "j") {
-      const maxIdx = Math.max(0, this.snapshot.plans.length - 1);
-      if (this.selectedAccountIndex < maxIdx) {
-        this.selectedAccountIndex++;
+      if (this.activeTab === "usage") {
+        const maxIdx = Math.max(0, this.snapshot.plans.length - 1);
+        if (this.selectedAccountIndex < maxIdx) this.selectedAccountIndex++;
+      } else {
+        this.scrollOffset++;
       }
-      return;
-    }
-
-    // Tab switching: [1] Usage, [2] Overview / Tokscale
-    if (data === "1" || data === "\t") {
-      this.activeTab = this.activeTab === "usage" ? "overview" : "usage";
-      return;
-    }
-    if (data === "2") {
-      this.activeTab = "overview";
       return;
     }
 
@@ -116,13 +128,13 @@ export class TokScaleView {
       return;
     }
 
-    // Email mask toggle: [e]
+    // Email / Secret Mask toggle: [e]
     if (data === "e" || data === "E") {
       this.maskEmails = !this.maskEmails;
       return;
     }
 
-    // Time filter cycling: [t]
+    // Time filter cycling: [t] (Today -> 7 Days -> 30 Days -> All-Time)
     if (data === "t" || data === "T") {
       if (this.currentTimeFilter.mode === "day") {
         this.currentTimeFilter = { mode: "7d", dayOffset: 0, label: "7 Days" };
@@ -145,74 +157,120 @@ export class TokScaleView {
   }
 
   public render(width: number): string[] {
-    const totalW = Math.max(88, Math.min(width || 100, 140));
+    const totalW = Math.max(90, width || 100);
+    const termRows = Math.max(26, this.getTerminalRows());
 
-    // Top Navigation & Filter Bar
-    const navBar = this.renderTopNavBar(totalW);
+    // 1. Top Header (Authentic TokScale Header Bar with Pi-Token branding)
+    const headerLines = this.renderTokScaleHeader(totalW);
 
+    // 2. Active Tab Content
     let bodyLines: string[] = [];
-    if (this.activeTab === "usage") {
-      bodyLines = this.renderUsageLimitsTab(totalW);
-    } else {
-      bodyLines = this.renderTokScaleOverviewTab(totalW);
+    switch (this.activeTab) {
+      case "usage":
+        bodyLines = this.renderUsageTab(totalW);
+        break;
+      case "overview":
+        bodyLines = this.renderOverviewTab(totalW);
+        break;
+      case "models":
+        bodyLines = this.renderModelsTab(totalW);
+        break;
+      case "daily":
+        bodyLines = this.renderDailyTab(totalW);
+        break;
+      case "hourly":
+        bodyLines = this.renderHourlyTab(totalW);
+        break;
+      case "sessions":
+        bodyLines = this.renderSessionsTab(totalW);
+        break;
     }
 
-    // Help Footer Bar
-    const footer = this.renderFooter(totalW);
+    // 3. Bottom Footer (TokScale Footer Bar)
+    const footerLines = this.renderTokScaleFooter(totalW);
 
-    // Ensure EVERY line returned is strictly a string (preventing uncaughtException in paintBox)
-    const result = [...navBar, "", ...bodyLines, "", footer];
-    return result.map((l) => (typeof l === "string" ? l : String(l ?? "")));
+    // Full screen assembly
+    const rendered = [...headerLines, ...bodyLines, ...footerLines];
+    const stringLines = rendered.map((l) => (typeof l === "string" ? l : String(l ?? "")));
+
+    // Fill remaining terminal lines with blank rows to fully paint the screen
+    if (stringLines.length < termRows) {
+      const padding = new Array(termRows - stringLines.length).fill("");
+      return [...stringLines, ...padding];
+    }
+    return stringLines.slice(0, termRows);
   }
 
-  /** Render top tabs and time selectors */
-  private renderTopNavBar(totalW: number): string[] {
-    const tab1 = this.activeTab === "usage"
-      ? `${C.bold}${C.brandOrange}● 1. USAGE LIMITS${C.reset}`
-      : `${C.gray}○ 1. Usage Limits${C.reset}`;
+  /** Authentic TokScale Header Bar: "┌ pi-token ───────────── [Tabs] ──────────── GitHub ┐" */
+  private renderTokScaleHeader(totalW: number): string[] {
+    const tabDefs: { id: TokScaleTab; label: string; num: string }[] = [
+      { id: "usage", label: "Usage", num: "1" },
+      { id: "overview", label: "Overview", num: "2" },
+      { id: "models", label: "Models", num: "3" },
+      { id: "daily", label: "Daily", num: "4" },
+      { id: "hourly", label: "Hourly", num: "5" },
+      { id: "sessions", label: "Sessions", num: "6" },
+    ];
 
-    const tab2 = this.activeTab === "overview"
-      ? `${C.bold}${C.brandCyan}● 2. TOKSCALE OVERVIEW${C.reset}`
-      : `${C.gray}○ 2. TokScale Overview${C.reset}`;
+    const tabSegments = tabDefs.map((t) => {
+      const active = this.activeTab === t.id;
+      if (active) {
+        return `${C.bold}${C.brandCyan}${t.label}${C.reset}`;
+      }
+      return `${C.gray}${t.label}${C.reset}`;
+    }).join(` ${C.darkGray}│${C.reset} `);
 
-    const scopeBadge = this.currentScope === "repo"
-      ? `${C.amber}[Scope: ${C.bold}Workspace${C.reset}${C.amber}]${C.reset}`
-      : `${C.cyan}[Scope: ${C.bold}Global Machine${C.reset}${C.cyan}]${C.reset}`;
+    const title = `${C.bold}${C.brandOrange} pi-token ${C.reset}`;
+    const leftPart = `${C.boxBlue}┌${title}${C.boxBlue}`;
+    const rightTag = `${C.gray}v1.0.0 · ${this.currentScope === "repo" ? "Workspace" : "Global"}${C.boxBlue}┐${C.reset}`;
 
-    const filterBadge = `${C.purple}[t] Period: ${C.bold}${this.currentTimeFilter.label}${C.reset}`;
+    const remTop = Math.max(0, totalW - visibleLength(title) - visibleLength(rightTag) - 1);
+    const topLine = `${leftPart}${"─".repeat(remTop)}${rightTag}`;
 
-    const left = `  ${tab1}    ${tab2}`;
-    const right = `${scopeBadge}   ${filterBadge}  `;
-    const space = Math.max(2, totalW - visibleLength(left) - visibleLength(right));
+    const tabLineContent = `  ${tabSegments}`;
+    const scopeLabel = `${C.purple}[t] ${this.currentTimeFilter.label}${C.reset}  ${C.amber}[s] ${this.currentScope.toUpperCase()}${C.reset}`;
+    const padMid = Math.max(2, totalW - visibleLength(tabLineContent) - visibleLength(scopeLabel) - 4);
+    const midLine = `${C.boxBlue}│${C.reset}${tabLineContent}${" ".repeat(padMid)}${scopeLabel}  ${C.boxBlue}│${C.reset}`;
 
-    return [left + " ".repeat(space) + right];
+    const botLine = `${C.boxBlue}├${"─".repeat(Math.max(0, totalW - 2))}┤${C.reset}`;
+
+    return [topLine, midLine, botLine];
   }
 
-  /** 1. Tab 1: TokScale Structured Usage Tab (Summary + Inspector + Accounts Table) */
-  private renderUsageLimitsTab(totalW: number): string[] {
+  /** Authentic TokScale Footer Bar: Sorts, navigation shortcuts & totals */
+  private renderTokScaleFooter(totalW: number): string[] {
+    const o = this.snapshot.overview;
+    const topBorder = `${C.boxBlue}├${"─".repeat(Math.max(0, totalW - 2))}┤${C.reset}`;
+
+    const leftNav = `  ${C.cyan}▲/▼${C.reset} select · ${C.cyan}1..6${C.reset} tab · ${C.cyan}[Tab]${C.reset} cycle · ${C.cyan}[t]${C.reset} period · ${C.cyan}[s]${C.reset} scope · ${C.cyan}[e]${C.reset} mask · ${C.cyan}[r]${C.reset} refresh · ${C.red}[q]${C.reset} quit`;
+    const rightTotals = `${C.amber}${formatCost(o.totalCost)}${C.reset} · ${formatTokens(o.inputTokens + o.outputTokens)} tok · ${o.totalCalls.toLocaleString()} calls  `;
+    const pad1 = Math.max(2, totalW - visibleLength(leftNav) - visibleLength(rightTotals) - 2);
+    const line1 = `${C.boxBlue}│${C.reset}${leftNav}${" ".repeat(pad1)}${rightTotals}${C.boxBlue}│${C.reset}`;
+
+    const bottomBorder = `${C.boxBlue}└${"─".repeat(Math.max(0, totalW - 2))}┘${C.reset}`;
+    return [topBorder, line1, bottomBorder];
+  }
+
+  /** 1. Tab 1: Authentic TokScale Usage Tab (Readiness + Inspector + Accounts Table) */
+  private renderUsageTab(totalW: number): string[] {
     const plans = this.snapshot.plans;
-    const colW = Math.floor((totalW - 4) / 2);
+    const colW = Math.floor((totalW - 6) / 2);
     const innerColW = colW - 4;
 
-    // 1. One-line snapshot status header (always visible)
     const readyCount = plans.filter((p) => p.status === "active").length;
     const watchCount = plans.filter((p) => p.status === "limited").length;
-    const emailState = this.maskEmails ? "emails masked" : "emails visible";
+    const emailState = this.maskEmails ? "hidden" : "visible";
     const snapshotText = `  ${C.bold}Usage Snapshot:${C.reset} ${C.green}● ${readyCount} Ready${C.reset} · ${watchCount > 0 ? `${C.amber}● ${watchCount} Watch` : `${C.darkGray}0 Watch`}${C.reset} · ${plans.length} Providers · ${C.gray}[e] ${emailState}${C.reset}`;
 
-    // 2. Left Card: Overall System Readiness & Reset Countdown
+    // Left Card: Overall System Readiness
     const leftLines: string[] = [];
     leftLines.push(boxTop("SYSTEM READINESS", colW, C.boxBlue));
-
-    const overallState = watchCount > 0 ? `${C.amber}● WATCH (1 or more limited)${C.reset}` : `${C.green}● READY (Normal operation)${C.reset}`;
+    const overallState = watchCount > 0 ? `${C.amber}● WATCH (limits reached)${C.reset}` : `${C.green}● READY (Normal operation)${C.reset}`;
     leftLines.push(boxLine(`State:     ${overallState}`, innerColW, C.boxBlue));
-
     const activeProvider = plans[0]?.name || "None";
     leftLines.push(boxLine(`Primary:   ${C.bold}${C.white}${activeProvider}${C.reset} (Auto-detected in auth.json)`, innerColW, C.boxBlue));
-
     leftLines.push(boxLine(`Capacity:  ${C.green}${readyCount} ready${C.reset} · ${watchCount} watch · ${plans.length} total`, innerColW, C.boxBlue));
 
-    // Next nearest reset time
     let nextReset = "No active resets pending";
     for (const p of plans) {
       if (p.primaryLimit?.resetAt) {
@@ -224,7 +282,7 @@ export class TokScaleView {
     leftLines.push(boxLine(`Action:    ${C.cyan}Ready for subagent & heavy tasks${C.reset}`, innerColW, C.boxBlue));
     leftLines.push(boxBottom(colW, C.boxBlue));
 
-    // 3. Right Card: Selected Account Deep-Dive Inspector
+    // Right Card: Selected Account Inspector
     const selected = plans[this.selectedAccountIndex] || plans[0];
     const rightLines: string[] = [];
     rightLines.push(boxTop(`INSPECTOR: ${selected ? selected.name.toUpperCase() : "NO ACCOUNT"}`, colW, C.boxPurple));
@@ -237,8 +295,8 @@ export class TokScaleView {
 
       if (selected.balance) {
         const bal = selected.balance;
-        rightLines.push(boxLine(`Balance:   ${C.bold}${C.green}$${bal.totalBalance.toFixed(2)} USD${C.reset}  (Granted: $${(bal.grantedBalance || 0).toFixed(2)})`, innerColW, C.boxPurple));
-        rightLines.push(boxLine(`Top-up:    $${(bal.toppedUpBalance || 0).toFixed(2)} USD available`, innerColW, C.boxPurple));
+        rightLines.push(boxLine(`Balance:   ${C.bold}${C.green}$${bal.totalBalance.toFixed(2)} USD${C.reset} (Granted: $${(bal.grantedBalance || 0).toFixed(2)})`, innerColW, C.boxPurple));
+        rightLines.push(boxLine(`Top-up:    $${(bal.toppedUpBalance || 0).toFixed(2)} USD available credit`, innerColW, C.boxPurple));
       } else if (selected.quotaGroups && selected.quotaGroups.length > 0) {
         for (const g of selected.quotaGroups) {
           for (const b of g.buckets.slice(0, 3)) {
@@ -262,13 +320,13 @@ export class TokScaleView {
 
     const topCards = zipLinesSideBySide(leftLines, rightLines, colW, colW, 2);
 
-    // 4. Bottom Table: Full Accounts & Providers Matrix
+    // Bottom Table: Full Accounts & Providers Matrix
     const tableW = totalW - 2;
     const innerTableW = tableW - 4;
     const tableLines: string[] = [];
 
-    tableLines.push(boxTop("ACCOUNTS & PROVIDERS TABLE (Use [↑]/[↓] to select)", tableW, C.boxOrange));
-    tableLines.push(boxLine(`${C.gray}  Provider           Account             Plan                   Primary Limit / Quota         Status${C.reset}`, innerTableW, C.boxOrange));
+    tableLines.push(boxTop("ACCOUNTS & PROVIDERS TABLE (Use ▲/▼ to select)", tableW, C.boxOrange));
+    tableLines.push(boxLine(`${C.gray}  Provider           Account             Plan                   Primary Limit / Balance       Status${C.reset}`, innerTableW, C.boxOrange));
 
     for (let i = 0; i < plans.length; i++) {
       const p = plans[i];
@@ -303,17 +361,16 @@ export class TokScaleView {
     return [snapshotText, "", ...topCards, "", ...tableLines];
   }
 
-  /** 2. Tab 2: TokScale 2-Column Dashboard */
-  private renderTokScaleOverviewTab(totalW: number): string[] {
+  /** 2. Tab 2: TokScale 2-Column Overview Dashboard */
+  private renderOverviewTab(totalW: number): string[] {
     const o = this.snapshot.overview;
-    const colW = Math.floor((totalW - 4) / 2);
+    const colW = Math.floor((totalW - 6) / 2);
     const innerColW = colW - 4;
 
-    // Header summary card (Hero)
     const heroBoxW = totalW - 2;
     const innerHeroW = heroBoxW - 4;
     const heroLines: string[] = [
-      boxTop(`CodeBurn ⚡ Tokscale [ ${o.periodLabel} ]`, heroBoxW, C.boxOrange),
+      boxTop(`Pi-Token ⚡ Overview [ ${o.periodLabel} ]`, heroBoxW, C.boxOrange),
       boxLine(
         `${C.bold}${C.brandGold}${formatCost(o.totalCost)}${C.reset} cost   ${C.bold}${C.white}${o.totalCalls.toLocaleString()}${C.reset} calls   ${C.bold}${C.white}${o.totalSessions}${C.reset} sessions   ${C.bold}${C.green}${o.cacheHitRate}% cache hit${C.reset}   ${C.purple}Burn: $${o.burnVelocityUsdPerHour.toFixed(2)}/hr · ${o.burnVelocityTokensPerMin} tok/min${C.reset}`,
         innerHeroW,
@@ -327,21 +384,17 @@ export class TokScaleView {
       boxBottom(heroBoxW, C.boxOrange),
     ];
 
-    // Left Column: Daily Activity + By Activity + Core Tools
     const leftColLines: string[] = [];
-
-    // Box 1: Daily Activity
     leftColLines.push(boxTop("Daily Activity", colW, C.boxBlue));
     leftColLines.push(boxLine(`${C.gray}Date       Tokens       Cost    Calls${C.reset}`, innerColW, C.boxBlue));
     const maxDayCost = Math.max(...o.dailyActivity.map((d) => d.cost), 1);
-    for (const d of o.dailyActivity) {
+    for (const d of o.dailyActivity.slice(0, 5)) {
       const bar = renderTokScaleBar(d.cost / maxDayCost, 8);
-      const row = `${d.date} ${bar} ${C.amber}${formatCost(d.cost).padStart(7)}${C.reset} ${C.white}${String(d.calls).padStart(5)}${C.reset}`;
+      const row = `${d.date.slice(5)} ${bar} ${C.amber}${formatCost(d.cost).padStart(7)}${C.reset} ${C.white}${String(d.calls).padStart(5)}${C.reset}`;
       leftColLines.push(boxLine(row, innerColW, C.boxBlue));
     }
     leftColLines.push(boxBottom(colW, C.boxBlue));
 
-    // Box 2: By Activity
     leftColLines.push(boxTop("By Activity", colW, C.boxPurple));
     leftColLines.push(boxLine(`${C.gray}Type              Cost  Turns  1-Shot${C.reset}`, innerColW, C.boxPurple));
     for (const a of o.byActivity) {
@@ -351,7 +404,6 @@ export class TokScaleView {
     }
     leftColLines.push(boxBottom(colW, C.boxPurple));
 
-    // Box 3: Core Tools
     leftColLines.push(boxTop("Core Tools", colW, C.boxPink));
     for (const t of o.coreTools) {
       const bar = renderTokScaleBar(t.calls / (o.totalCalls || 1), 8);
@@ -360,14 +412,11 @@ export class TokScaleView {
     }
     leftColLines.push(boxBottom(colW, C.boxPink));
 
-    // Right Column: By Project + By Model + Shell Commands
     const rightColLines: string[] = [];
-
-    // Box 4: By Project
     rightColLines.push(boxTop("By Project", colW, C.boxGreen));
     rightColLines.push(boxLine(`${C.gray}Workspace / Repo                Cost   Sess${C.reset}`, innerColW, C.boxGreen));
     const maxProjCost = Math.max(...o.byProject.map((p) => p.cost), 1);
-    for (const p of o.byProject) {
+    for (const p of o.byProject.slice(0, 5)) {
       const bar = renderTokScaleBar(p.cost / maxProjCost, 6);
       const name = p.project.length > 20 ? p.project.slice(0, 19) + "…" : p.project;
       const row = `${bar} ${name.padEnd(20)} ${C.amber}${formatCost(p.cost).padStart(7)}${C.reset} ${String(p.sessions).padStart(4)}`;
@@ -375,11 +424,10 @@ export class TokScaleView {
     }
     rightColLines.push(boxBottom(colW, C.boxGreen));
 
-    // Box 5: By Model
     rightColLines.push(boxTop("By Model", colW, C.boxPurple));
     rightColLines.push(boxLine(`${C.gray}Model Identifier                Cost  Calls${C.reset}`, innerColW, C.boxPurple));
     const maxModCost = Math.max(...o.byModel.map((m) => m.cost), 1);
-    for (const m of o.byModel) {
+    for (const m of o.byModel.slice(0, 5)) {
       const bar = renderTokScaleBar(m.cost / maxModCost, 6);
       const mName = m.model.length > 20 ? m.model.slice(0, 19) + "…" : m.model;
       const row = `${bar} ${C.cyan}${mName.padEnd(20)}${C.reset} ${C.amber}${formatCost(m.cost).padStart(7)}${C.reset} ${String(m.calls).padStart(5)}`;
@@ -387,24 +435,128 @@ export class TokScaleView {
     }
     rightColLines.push(boxBottom(colW, C.boxPurple));
 
-    // Box 6: Shell Commands
     rightColLines.push(boxTop("Shell Commands & Runtimes", colW, C.boxOrange));
     for (const s of o.shellCommands) {
       const bar = renderTokScaleBar(s.calls / (o.totalCalls || 1), 8);
-      const row = `${bar} ${C.white}${s.name.padEnd(16)}${C.reset} ${C.brandGold}${String(s.calls).padStart(6)} calls${C.reset}`;
+      const row = `${bar} ${s.name.padEnd(16)} ${C.brandGold}${String(s.calls).padStart(6)} calls${C.reset}`;
       rightColLines.push(boxLine(row, innerColW, C.boxOrange));
     }
     rightColLines.push(boxBottom(colW, C.boxOrange));
 
-    // Combine 2 Columns
     const gridLines = zipLinesSideBySide(leftColLines, rightColLines, colW, colW, 2);
-
     return [...heroLines, "", ...gridLines];
   }
 
-  /** Render bottom hotkey footer */
-  private renderFooter(totalW: number): string[] {
-    const keys = `  ${C.amber}[↑/↓]${C.reset} Select Account   ${C.amber}[1]${C.reset} Usage   ${C.cyan}[2]${C.reset} TokScale   ${C.purple}[t]${C.reset} Period   ${C.green}[s]${C.reset} Scope   ${C.gray}[e]${C.reset} Mask   ${C.white}[r]${C.reset} Refresh   ${C.red}[q/Esc]${C.reset} Exit`;
-    return [keys];
+  /** 3. Tab 3: Detailed Models Comparison */
+  private renderModelsTab(totalW: number): string[] {
+    const o = this.snapshot.overview;
+    const boxW = totalW - 2;
+    const innerW = boxW - 4;
+    const lines: string[] = [];
+
+    lines.push(boxTop("PI-TOKEN MODELS TELEMETRY & SPEND BREAKDOWN", boxW, C.boxPurple));
+    lines.push(boxLine(`${C.gray}Rank  Model Identifier         Provider     Input       Output      Cached      Total Tok    Hit %   Calls     Total Cost${C.reset}`, innerW, C.boxPurple));
+
+    for (let i = 0; i < o.detailedModels.length; i++) {
+      const m = o.detailedModels[i];
+      const rank = String(i + 1).padStart(2);
+      const mName = padToCellWidth(m.model.length > 22 ? m.model.slice(0, 21) + "…" : m.model, 23);
+      const prov = padToCellWidth(m.provider, 12);
+      const inp = padToCellWidth(formatTokens(m.inputTokens), 11);
+      const out = padToCellWidth(formatTokens(m.outputTokens), 11);
+      const cr = padToCellWidth(formatTokens(m.cachedTokens), 11);
+      const tot = padToCellWidth(formatTokens(m.totalTokens), 12);
+      const hit = padToCellWidth(`${m.cacheHitRate}%`, 7);
+      const calls = padToCellWidth(String(m.calls), 9);
+      const cost = `${C.bold}${C.amber}${formatCost(m.cost).padStart(10)}${C.reset}`;
+
+      const row = `${C.gray}${rank}${C.reset}    ${C.cyan}${mName}${C.white}${prov}${inp}${out}${cr}${tot}${hit}${calls}${cost}`;
+      lines.push(boxLine(row, innerW, C.boxPurple));
+    }
+
+    lines.push(boxBottom(boxW, C.boxPurple));
+    return lines;
+  }
+
+  /** 4. Tab 4: Daily History */
+  private renderDailyTab(totalW: number): string[] {
+    const o = this.snapshot.overview;
+    const boxW = totalW - 2;
+    const innerW = boxW - 4;
+    const lines: string[] = [];
+
+    lines.push(boxTop("PI-TOKEN DAILY CONSUMPTION & SPEND HISTORY", boxW, C.boxBlue));
+    lines.push(boxLine(`${C.gray}Date         Calls    Input       Output      Cached       Total Tok     Hit %    Cost (USD)     Daily Ratio${C.reset}`, innerW, C.boxBlue));
+
+    const maxCost = Math.max(...o.dailyActivity.map((d) => d.cost), 1);
+    for (const d of o.dailyActivity) {
+      const dt = padToCellWidth(d.date, 12);
+      const calls = padToCellWidth(String(d.calls), 8);
+      const inp = padToCellWidth(formatTokens(d.inputTokens), 11);
+      const out = padToCellWidth(formatTokens(d.outputTokens), 11);
+      const cr = padToCellWidth(formatTokens(d.tokens - d.inputTokens - d.outputTokens), 12);
+      const tot = padToCellWidth(formatTokens(d.tokens), 13);
+      const hit = padToCellWidth(`${d.cacheHitRate}%`, 8);
+      const cost = padToCellWidth(formatCost(d.cost), 14);
+      const bar = renderTokScaleBar(d.cost / maxCost, 14);
+
+      const row = `${C.white}${dt}${C.reset}${calls}${inp}${out}${cr}${tot}${hit}${C.amber}${cost}${C.reset}${bar}`;
+      lines.push(boxLine(row, innerW, C.boxBlue));
+    }
+
+    lines.push(boxBottom(boxW, C.boxBlue));
+    return lines;
+  }
+
+  /** 5. Tab 5: Hourly Diurnal Profile */
+  private renderHourlyTab(totalW: number): string[] {
+    const o = this.snapshot.overview;
+    const boxW = totalW - 2;
+    const innerW = boxW - 4;
+    const lines: string[] = [];
+
+    lines.push(boxTop("PI-TOKEN 24-HOUR HOURLY DIURNAL VELOCITY", boxW, C.boxGreen));
+    lines.push(boxLine(`${C.gray}Hour (UTC)    Calls       Tokens         Cost (USD)    Relative Burn Velocity${C.reset}`, innerW, C.boxGreen));
+
+    const maxCost = Math.max(...o.hourlyActivity.map((h) => h.cost), 1);
+    for (const h of o.hourlyActivity) {
+      const hr = padToCellWidth(`${h.hour}:00`, 13);
+      const calls = padToCellWidth(String(h.calls), 11);
+      const tok = padToCellWidth(formatTokens(h.tokens), 14);
+      const cost = padToCellWidth(formatCost(h.cost), 13);
+      const bar = renderTokScaleBar(h.cost / maxCost, 24);
+
+      const row = `${C.cyan}${hr}${C.reset}${calls}${tok}${C.amber}${cost}${C.reset}${bar}`;
+      lines.push(boxLine(row, innerW, C.boxGreen));
+    }
+
+    lines.push(boxBottom(boxW, C.boxGreen));
+    return lines;
+  }
+
+  /** 6. Tab 6: Live Sessions Ledger */
+  private renderSessionsTab(totalW: number): string[] {
+    const o = this.snapshot.overview;
+    const boxW = totalW - 2;
+    const innerW = boxW - 4;
+    const lines: string[] = [];
+
+    lines.push(boxTop("PI-TOKEN LIVE RECENT SESSIONS LEDGER", boxW, C.boxOrange));
+    lines.push(boxLine(`${C.gray}Last Active      Session UUID                           Workspace             Model                 Calls   Cost${C.reset}`, innerW, C.boxOrange));
+
+    for (const s of o.detailedSessions) {
+      const act = padToCellWidth(s.lastActive, 16);
+      const uuid = padToCellWidth(s.sessionId, 38);
+      const ws = padToCellWidth(s.workspace, 21);
+      const mdl = padToCellWidth(s.model, 21);
+      const calls = padToCellWidth(String(s.calls), 7);
+      const cost = `${C.bold}${C.amber}${formatCost(s.cost).padStart(8)}${C.reset}`;
+
+      const row = `${C.gray}${act}${C.reset}${C.cyan}${uuid}${C.white}${ws}${mdl}${calls}${cost}`;
+      lines.push(boxLine(row, innerW, C.boxOrange));
+    }
+
+    lines.push(boxBottom(boxW, C.boxOrange));
+    return lines;
   }
 }

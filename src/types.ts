@@ -8,6 +8,14 @@ export interface TimeFilter {
   label: string;
 }
 
+export type TokScaleTab =
+  | "usage"     // 1. Quota & Limits
+  | "overview"  // 2. 2-Col Burn & Tool breakdown
+  | "models"    // 3. Models comparison table
+  | "daily"     // 4. Daily history table
+  | "hourly"    // 5. 24h diurnal pattern
+  | "sessions"; // 6. Recent sessions ledger
+
 export interface RateLimitWindow {
   allowed: boolean;
   usedPercent: number;
@@ -56,24 +64,43 @@ export interface PlanInfo {
   lastUpdated: Date;
 }
 
-export interface ProviderSpendSummary {
-  provider: string;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  totalTokens: number;
-  totalCost: number;
-  cacheSavings: number;
-  calls: number;
-}
-
 export interface DailyActivityRow {
   date: string;
   cost: number;
   calls: number;
   tokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheHitRate: number;
+}
+
+export interface HourlyActivityRow {
+  hour: string; // 00..23
+  cost: number;
+  calls: number;
+  tokens: number;
+}
+
+export interface ModelDetailRow {
+  model: string;
+  provider: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  cost: number;
+  calls: number;
+  cacheHitRate: number;
+}
+
+export interface SessionDetailRow {
+  sessionId: string;
+  workspace: string;
+  model: string;
+  calls: number;
+  cost: number;
+  tokens: number;
+  lastActive: string;
 }
 
 export interface ProjectSpendRow {
@@ -100,21 +127,12 @@ export interface ToolCallsRow {
   calls: number;
 }
 
-export interface PeriodSpend {
-  cost: number;
-  calls: number;
-  tokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  cacheSavings: number;
-}
-
 export interface TokScaleOverview {
   periodLabel: string;
   totalCost: number;
   totalCalls: number;
   totalSessions: number;
-  cacheHitRate: number; // e.g. 94%
+  cacheHitRate: number;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
@@ -123,21 +141,14 @@ export interface TokScaleOverview {
   burnVelocityTokensPerMin: number;
 
   dailyActivity: DailyActivityRow[];
+  hourlyActivity: HourlyActivityRow[];
   byProject: ProjectSpendRow[];
   byModel: ModelSpendRow[];
+  detailedModels: ModelDetailRow[];
+  detailedSessions: SessionDetailRow[];
   byActivity: ActivityBreakdownRow[];
   coreTools: ToolCallsRow[];
   shellCommands: ToolCallsRow[];
-}
-
-export interface ActiveSession {
-  sessionId: string;
-  workspace: string;
-  lastModel: string;
-  lastTimestamp: number;
-  idleSeconds: number;
-  totalCost: number;
-  totalTokens: number;
 }
 
 export interface PulseSnapshot {
@@ -145,6 +156,5 @@ export interface PulseSnapshot {
   activeScope: PulseScope;
   plans: PlanInfo[];
   overview: TokScaleOverview;
-  activeSessions: ActiveSession[];
   daemonRunning: boolean;
 }
